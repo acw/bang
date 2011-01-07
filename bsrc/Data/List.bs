@@ -1,24 +1,47 @@
 module Data.List
 
-data List a = Null | (:) a (List a)
+export datatype List a =
+   NULL()
+ | (:)(a,List a);
 
-(++) :: [a] -> [a] -> [a]
-a ++ []      = a
-[] ++ b      = b
-(af:ar) ++ b = af:(ar ++ b)
+export (++)(a :: [a], b :: [a]) :: [a]
+{
+  case a of
+    []       -> b
+    (af:ar)  -> case b of
+                  [] -> a
+                  _  -> af:(ar ++ b)
+};
 
-null :: [a] -> Bool
-null [] = True
-null _  = False
+export null(ls :: [a]) :: Bool
+{
+  case ls of
+    [] -> True
+    _  -> False
+};
 
-length :: [a] -> Word
-length [] = 0
-length (a:rest) = 1 + length rest
+export length(ls :: [a]) :: Int
+{
+  case ls of
+    []     -> 0
+    _:rest -> length rest
+};
 
-reverse :: [a] -> [a]
-reverse xs = helper xs []
- where
-  helper [] acc = acc
-  helper (a:rest) acc = helper rest (a:acc)
+export reverse(ls :: [a]) :: [a]
+{
+  helper(xs,acc) = {
+    case xs of
+      []       -> acc
+      (a:rest) -> helper rest (a:acc)
+  }
 
+  helper ls [];
+};
 
+export restrict(Eq a) find(f :: a -> Bool, ls :: [a]) :: Maybe a
+{
+  case ls of
+    []             -> False
+    (a:_)    | f a -> a
+    (_:rest)       -> find(f, rest)
+};

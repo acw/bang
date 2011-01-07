@@ -39,7 +39,7 @@ pullTokens = do
         then return [res]
         else return (res :) `ap` pullTokens
 
-loadModule :: FilePath -> IO (Module ())
+loadModule :: FilePath -> IO (Module Position)
 loadModule path = do
   mtxt <- tryJust (guard . isDoesNotExistError) $ S.readFile path
   case mtxt of
