@@ -20,7 +20,7 @@ $bindigit = [01]
 -- Identifier Characters
 $typestart   = [A-Z\_]
 $valstart    = [a-z\_]
-$identrest   = [a-zA-Z0-9\_]
+$identrest   = [a-zA-Z0-9\_\.]
 $opident     = [\~\!\@\#\$\%\^\&\*\+\-\=\.\:\<\>\?\/\_]
 $escape_char = [abfnrtv'\"\\]
 

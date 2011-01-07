@@ -175,7 +175,6 @@ bangtype2 :: { Type }
 
 bangtype3 :: { Type }
   : TYPE_IDENT             { TVar (makeQualified $1) Star }
-  | VAL_IDENT              { TVar (makeQualified $1) Star }
   | '(' bangtype ')'       { $2 }
 
 -- Expressions --------------------------------------------------------------
