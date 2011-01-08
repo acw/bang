@@ -152,7 +152,32 @@ decl2 :: { Decl Position }
 -- Data Declarations --------------------------------------------------------
 
 data_decl :: { Decl Position }
-  : 'datatype'    { undefined }
+  : 'datatype' TYPE_IDENT type_args '=' data_clauses
+    { DeclData $1 [] (makeQualified $2) $3 $5 }
+
+type_args :: { [QualifiedName] }
+  :                     { [] }
+  | type_args VAL_IDENT { $1 ++ [makeQualified $2] }
+
+data_clauses :: { [DataClause Position] }
+  : data_clause                  { [] }
+  | data_clauses '|' data_clause { $1 ++ [$3] }
+
+data_clause :: { DataClause Position }
+  : constructor_name '(' constructor_args ')'
+    { DataClause $2 $1 (map fst $3) (map snd $3) }
+
+constructor_name :: { QualifiedName }
+  : TYPE_IDENT       { makeQualified $1 }
+  | '(' OP_IDENT ')' { makeQualified $2 }
+
+constructor_args :: { [(Maybe QualifiedName,Type)] }
+  : constructor_arg                      { [$1] }
+  | constructor_args ',' constructor_arg { $1 ++ [$3] }
+
+constructor_arg :: { (Maybe QualifiedName,Type) }
+  : bang_type                            { (Nothing, $1) }
+  | VAL_IDENT '::' bang_type             { (Just (makeQualified $1), $3) }
 
 -- Type Declarations --------------------------------------------------------
 

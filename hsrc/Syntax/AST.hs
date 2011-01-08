@@ -26,7 +26,7 @@ data ImportName = ImportNamed QualifiedName
  deriving (Show)
 
 data Show a => Decl a =
-    DeclData a [Type] QualifiedName [QualifiedName] [DataClause]
+    DeclData a [Type] QualifiedName [QualifiedName] [DataClause a]
   | DeclType a [Type]
   | DeclNewtype a [Type]
   | DeclClass a [Type] 
@@ -45,7 +45,7 @@ addTypeRestrictions rs (DeclValue    s _ a b c) = DeclValue s rs a b c
 addTypeRestrictions rs (DeclExport   s d)     =
   DeclExport s (addTypeRestrictions rs d)
 
-data DataClause = DataClause QualifiedName [Type]
+data DataClause a = DataClause a QualifiedName [Maybe QualifiedName] [Type]
  deriving (Show)
 
 data Show a => Expr a =
