@@ -1,5 +1,6 @@
 module Data.List
 
+/* This is a comment */
 export datatype List a =
    NULL()
  | (:)(a,List a);
