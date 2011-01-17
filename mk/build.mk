@@ -22,7 +22,7 @@ cmd_ghc_d_hs         = $(GHC) $(GHC_FLAGS) -M -dep-makefile $@ $<
 quiet_cmd_ghc_d_hs   = DEPEND  $(notdir $@)
 %.d : %.hs
 	$(call cmd,ghc_d_hs)
-	@$(SED) -i"" "s|: hsrc|: $(TOPDIR)/hsrc|g" $@
+	@$(SED) -i"" -e "s|: hsrc|: $(TOPDIR)/hsrc|g" $@
 
 # ghc-ld
 cmd_ghc_ld           = $(GHC) -o $@ $^
