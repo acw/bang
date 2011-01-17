@@ -27,22 +27,22 @@ import qualified Codec.Binary.UTF8.Generic as UTF8
   'instance'  { Lexeme $$ (TokValIdent "instance")  }
   'qualified' { Lexeme $$ (TokValIdent "qualified") }
   'as'        { Lexeme $$ (TokValIdent "as")        }
-  'case'      { Lexeme $$ (TokValIdent "case")      }
-  'of'        { Lexeme $$ (TokValIdent "of")        }
+--  'case'      { Lexeme $$ (TokValIdent "case")      }
+--  'of'        { Lexeme $$ (TokValIdent "of")        }
   'restrict'  { Lexeme $$ (TokValIdent "restrict")  }
 
 -- symbols
   '='        { Lexeme $$ (TokOpIdent  "=")        }
   '->'       { Lexeme $$ (TokOpIdent  "->")       }
-  '=>'       { Lexeme $$ (TokOpIdent  "=>")       }
+--  '=>'       { Lexeme $$ (TokOpIdent  "=>")       }
   '::'       { Lexeme $$ (TokOpIdent  "::")       }
-  '\\'       { Lexeme $$ (TokOpIdent  "\\")       }
+--  '\\'       { Lexeme $$ (TokOpIdent  "\\")       }
   '('        { Lexeme $$ LParen  }
   ')'        { Lexeme $$ RParen  }
   '['        { Lexeme $$ LSquare }
   ']'        { Lexeme $$ RSquare }
-  '{'        { Lexeme $$ LBrace  }
-  '}'        { Lexeme $$ RBrace  }
+--  '{'        { Lexeme $$ LBrace  }
+--  '}'        { Lexeme $$ RBrace  }
   '|'        { Lexeme $$ Bar     }
   ';'        { Lexeme $$ Semi    }
   ','        { Lexeme $$ Comma   }
@@ -53,10 +53,10 @@ import qualified Codec.Binary.UTF8.Generic as UTF8
   OP_IDENT   { Lexeme _ (TokOpIdent $$) }
 
 -- values
-  INTVAL     { Lexeme _ (TokInt $$) }
-  FLOATVAL   { Lexeme _ (TokFloat $$) }
-  CHARVAL    { Lexeme _ (TokChar $$) }
-  STRVAL     { Lexeme _ (TokString $$) }
+--  INTVAL     { Lexeme _ (TokInt $$) }
+--  FLOATVAL   { Lexeme _ (TokFloat $$) }
+--  CHARVAL    { Lexeme _ (TokChar $$) }
+--  STRVAL     { Lexeme _ (TokString $$) }
 
 %monad { Parser } { (>>=) } { return }
 %name parseModule top_module
@@ -164,7 +164,9 @@ data_clauses :: { [DataClause Position] }
   | data_clauses '|' data_clause { $1 ++ [$3] }
 
 data_clause :: { DataClause Position }
-  : constructor_name '(' constructor_args ')'
+  : constructor_name '(' ')'
+    { DataClause $2 $1 [] [] }
+  | constructor_name '(' constructor_args ')'
     { DataClause $2 $1 (map fst $3) (map snd $3) }
 
 constructor_name :: { QualifiedName }
@@ -225,8 +227,31 @@ value_ident :: { QualifiedName }
 
 -- Types in Bang ------------------------------------------------------------
 
-bang_type :: { Type }
+primary_type :: { Type }
   : TYPE_IDENT           { TVar (makeQualified $1) Star }
+  | VAL_IDENT            { TVar (makeQualified $1) Star }
+  | '(' bang_type ')'    { $2 }
+
+type_application_type :: { Type }
+  : type_application_type primary_type
+    { TAp $1 $2 }
+  | primary_type
+    { $1 }
+
+function_type :: { Type }
+  : function_type '->' type_application_type
+    { TAp (TVar (QualifiedName ["--INTERNAL--"] "->") Star) $3 }
+  | type_application_type
+    { $1 }
+
+list_type :: { Type }
+  : '[' list_type ']'
+    { TAp (TVar (QualifiedName ["Data","List"] "List") Star) $2 }
+  | function_type
+    { $1 }
+
+bang_type :: { Type }
+  : list_type            { $1 }
 
 -- 
 -- data_decl :: { Decl Position }
