@@ -24,7 +24,7 @@ export length(ls :: [a]) :: Int
 {
   case ls of
     []     -> 0
-    _:rest -> length rest
+    _:rest -> length(rest)
 };
 
 export reverse(ls :: [a]) :: [a]
@@ -32,10 +32,10 @@ export reverse(ls :: [a]) :: [a]
   helper(xs,acc) = {
     case xs of
       []       -> acc
-      (a:rest) -> helper rest (a:acc)
+      (a:rest) -> helper(rest, (a:acc))
   }
 
-  helper ls [];
+  helper(ls, []);
 };
 
 export restrict(Eq a) find(f :: a -> Bool, ls :: [a]) :: Maybe a

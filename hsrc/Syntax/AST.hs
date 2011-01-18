@@ -1,5 +1,7 @@
 module Syntax.AST where
 
+import Syntax.ParserCore
+
 data Show a => Module a = Module {
     modName    :: QualifiedName
   , modImports :: [Import]
@@ -12,6 +14,11 @@ data QualifiedName = QualifiedName {
   , qnName     :: String
   }
  deriving (Show)
+
+gensym :: Parser QualifiedName
+gensym = do
+  name <- genstr
+  return (QualifiedName [] name)
 
 data Import = Import {
     imName      :: QualifiedName
@@ -31,7 +38,7 @@ data Show a => Decl a =
   | DeclNewtype a [Type]
   | DeclClass a [Type] 
   | DeclInstance a [Type]
-  | DeclValue a [Type] Type QualifiedName [Stmt a]
+  | DeclValue a [Type] Type (Expr a)
   | DeclExport a (Decl a)
  deriving (Show)
 
@@ -41,7 +48,7 @@ addTypeRestrictions rs (DeclType     s _)       = DeclType s rs
 addTypeRestrictions rs (DeclNewtype  s _)       = DeclNewtype s rs
 addTypeRestrictions rs (DeclClass    s _)       = DeclClass s rs
 addTypeRestrictions rs (DeclInstance s _)       = DeclInstance s rs
-addTypeRestrictions rs (DeclValue    s _ a b c) = DeclValue s rs a b c
+addTypeRestrictions rs (DeclValue    s _ a b)   = DeclValue s rs a b
 addTypeRestrictions rs (DeclExport   s d)     =
   DeclExport s (addTypeRestrictions rs d)
 
@@ -51,16 +58,32 @@ data DataClause a = DataClause a QualifiedName [Maybe QualifiedName] [Type]
 data Show a => Expr a =
     Const  a ConstVal
   | VarRef a QualifiedName
-  | Cond a (Expr a) (Expr a)
-  | App a (Expr a) (Expr a)
-  | Block a [Expr a]
+  | Cond a (Expr a) (Expr a) (Expr a)
+  | App a (Expr a) [Expr a]
+  | Block a [Stmt a]
   | Lambda a [QualifiedName] (Expr a)
  deriving (Show)
+
+getSpecial :: Show a => Expr a -> a
+getSpecial (Const a _)    = a
+getSpecial (VarRef a _)   = a
+getSpecial (Cond a _ _ _) = a
+getSpecial (App a _ _)    = a
+getSpecial (Block a _)    = a
+getSpecial (Lambda a _ _) = a
 
 data Show a => Stmt a =
     SExpr a (Expr a)
   | SBind a QualifiedName (Stmt a)
-  | SCase a
+  | SCase a (Expr a) [(Pattern,Maybe (Expr a),Expr a)]
+ deriving (Show)
+
+data Pattern =
+    ListNull
+  | PConst ConstVal
+  | PVar QualifiedName
+  | PNamed QualifiedName Pattern
+  | PAp Pattern Pattern
  deriving (Show)
 
 data Kind = Star | KFun Kind Kind
