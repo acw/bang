@@ -34,7 +34,7 @@ import qualified Codec.Binary.UTF8.Generic as UTF8
 -- symbols
   '='        { Lexeme $$ (TokOpIdent  "=")        }
   '->'       { Lexeme $$ (TokOpIdent  "->")       }
-  '=>'       { Lexeme $$ (TokOpIdent  "=>")       }
+  '@'        { Lexeme $$ (TokOpIdent  "@")       }
   '::'       { Lexeme $$ (TokOpIdent  "::")       }
   '\\'       { Lexeme $$ (TokOpIdent  "\\")       }
   '('        { Lexeme $$ LParen  }
@@ -46,17 +46,18 @@ import qualified Codec.Binary.UTF8.Generic as UTF8
   '|'        { Lexeme $$ Bar     }
   ';'        { Lexeme $$ Semi    }
   ','        { Lexeme $$ Comma   }
+  '`'        { Lexeme $$ BTick   }
 
 -- identifiers
-  TYPE_IDENT { Lexeme _ (TokTypeIdent $$) }
-  VAL_IDENT  { Lexeme _ (TokValIdent $$) }
-  OP_IDENT   { Lexeme _ (TokOpIdent $$) }
+  TYPE_IDENT { Lexeme _ (TokTypeIdent _) }
+  VAL_IDENT  { Lexeme _ (TokValIdent _) }
+  OP_IDENT   { Lexeme _ (TokOpIdent _) }
 
 -- values
-  INTVAL     { Lexeme _ (TokInt $$) }
-  FLOATVAL   { Lexeme _ (TokFloat $$) }
-  CHARVAL    { Lexeme _ (TokChar $$) }
-  STRVAL     { Lexeme _ (TokString $$) }
+  INTVAL     { Lexeme _ (TokInt _) }
+  FLOATVAL   { Lexeme _ (TokFloat _) }
+  CHARVAL    { Lexeme _ (TokChar _) }
+  STRVAL     { Lexeme _ (TokString _) }
 
 %monad { Parser } { (>>=) } { return }
 %name parseModule top_module
@@ -164,7 +165,9 @@ data_clauses :: { [DataClause Position] }
   | data_clauses '|' data_clause { $1 ++ [$3] }
 
 data_clause :: { DataClause Position }
-  : constructor_name '(' constructor_args ')'
+  : constructor_name '(' ')'
+    { DataClause $2 $1 [] [] }
+  | constructor_name '(' constructor_args ')'
     { DataClause $2 $1 (map fst $3) (map snd $3) }
 
 constructor_name :: { QualifiedName }
@@ -202,7 +205,9 @@ instance_decl :: { Decl Position }
 -- Value Declaration --------------------------------------------------------
 
 value_decl :: { Decl Position }
-  : value_ident optional_args optional_type { undefined }
+  : value_ident optional_args optional_type value_body
+    {% postProcessDeclVal $1 $2 $3 $4 }
+
 
 optional_args :: { Maybe [(QualifiedName, Maybe Type)] }
   : '(' optional_args2 ')'   { Just $2 }
@@ -223,147 +228,156 @@ value_ident :: { QualifiedName }
   : VAL_IDENT            { makeQualified $1 }
   | '(' OP_IDENT ')'     { makeQualified $2 }
 
+value_body :: { (Position, Expr Position) }
+  : '=' expression       { ($1, $2) }
+  | '{' statements '}'   { ($1, Block $1 $2) }
+
 -- Types in Bang ------------------------------------------------------------
 
-bang_type :: { Type }
+primary_type :: { Type }
   : TYPE_IDENT           { TVar (makeQualified $1) Star }
+  | VAL_IDENT            { TVar (makeQualified $1) Star }
+  | '(' bang_type ')'    { $2 }
 
--- 
--- data_decl :: { Decl Position }
---   : 'datatype' mqualifiers TYPE_IDENT data_args dataclauses
---   { DeclData $2 (makeQualified $3) $4 $5 }
--- 
--- mqualifiers :: { [Type] }
---   :                          { [] }
---   | '(' tqualifiers ')' '=>' { $2 }
--- 
--- tqualifiers :: { [Type] }
---   : tqualifier                 { [$1] }
---   | tqualifiers ',' tqualifier { $1 ++ [$3] }
--- 
--- tqualifier :: { Type }
---   : TYPE_IDENT VAL_IDENT
---     { TAp (TCon (makeQualified $1) Star) (TVar (makeQualified $2) Star) }
---   | tqualifier VAL_IDENT
---     { TAp $1 (TVar (makeQualified $2) Star) }
--- 
--- data_args :: { [QualifiedName] }
---   :                            { [] }
---   | data_args VAL_IDENT        { $1 ++ [makeQualified $2] }
--- 
--- dataclauses :: { [DataClause] }
---   : '=' dataclause             { [$2] }
---   | dataclauses '|' dataclause { $1 ++ [$3] }
--- 
--- dataclause :: { DataClause }
---   : constructor_id             { DataClause $1 [] }
---   | dataclause bangtype3       { let DataClause name items = $1
---                                  in DataClause name (items ++ [$2]) }
--- 
--- constructor_id :: { QualifiedName }
---   : TYPE_IDENT                 { makeQualified $1 }
---   | '(' OP_IDENT ')'           { makeQualified $2 }
--- 
--- -- Type alias Declarations --------------------------------------------------
--- 
--- type_decl :: { Decl Position }
---   : 'type'        { DeclType }
--- 
--- -- Newtype Declarations -----------------------------------------------------
--- 
--- newtype_decl :: { Decl Position }
---   : 'newtype'     { DeclNewtype }
--- 
--- -- Type class Declarations --------------------------------------------------
--- 
--- class_decl :: { Decl Position }
---   : 'class'       { DeclClass }
--- 
--- -- Instance Declarations ----------------------------------------------------
--- 
--- instance_decl :: { Decl Position }
---   : 'instance'    { DeclInstance }
--- 
--- -- Data value Declarations --------------------------------------------------
--- 
--- value_decl :: { Decl Position }
---   : value_name '=' expr { DeclValue Nothing $1 (Just $3) }
--- 
--- value_name :: { QualifiedName }
---   : VAL_IDENT    { makeQualified $1 }
---   | '(' OP_IDENT ')' { makeQualified $2 }
--- 
--- -- Data value type Declarations ---------------------------------------------
--- 
--- vtype_decl :: {Decl Position }
---  : value_name '::' bangtype { DeclValue (Just $3) $1 Nothing }
--- 
--- -- Types --------------------------------------------------------------------
--- 
--- bangtype :: { Type }
---   : bangtype1            { $1 }
--- 
--- bangtype1 :: { Type }
---   : bangtype1 VAL_IDENT  { TAp $1 (TVar (makeQualified $2) Star) }
---   | bangtype2            { $1 }
--- 
--- bangtype2 :: { Type }
---   : bangtype2 '->' bangtype3
---     { TAp (TAp (TCon (QualifiedName [] "->") Star) $1) $3 }
---   | bangtype3            { $1 }
--- 
--- bangtype3 :: { Type }
---   : '[' bangtype3 ']'
---     { TAp (TVar (QualifiedName ["Data","List"] "List") Star) $2 }
---   | bangtype4              { $1 }
--- 
--- bangtype4 :: { Type }
---   : TYPE_IDENT             { TVar (makeQualified $1) Star }
---   | '(' bangtype ')'       { $2 }
--- 
--- -- Statements ---------------------------------------------------------------
--- 
--- statement :: { Statement }
---   : expr ';'               { }
---   | 'case' expr 'of'       { }
--- 
--- -- Expressions --------------------------------------------------------------
--- 
--- expr :: { Expr Position }
---   : '\\' arglist '->' expr1 { Lambda Position $2 $4 }
---   | expr1                   { $1 }
--- 
--- arglist :: { [QualifiedName] }
---   : VAL_IDENT           { [makeQualified $1] }
---   | arglist VAL_IDENT   { $1 ++ [makeQualified $2] }
--- 
--- expr1 :: { Expr Position }
---   : '{' exprs '}'       { Block Position $2 }
---   | expr2               { $1 }
--- 
--- exprs :: { [Expr Position] }
---   : expr ';'            { [$1] }
---   | exprs expr ';'      { $1 ++ [$2] }
--- 
--- expr2 :: { Expr Position }
---   : '[' list_exprs ']'  { unwindList $2 }
---   | expr3               { $1 }
--- 
--- list_exprs :: { [Expr Position] }
---   :                      { [] }
---   | list_exprs ',' expr3 { $1 ++ [$3] }
--- 
--- expr3 :: { Expr Position }
---   : bottom_expr         { $1 }
--- 
--- bottom_expr :: { Expr Position }
---   : INTVAL              { let (b,v) = $1 in Const () (ConstInteger b v) }
---   | FLOATVAL            { Const Position (ConstFloat $1) }
---   | CHARVAL             { Const Position (ConstChar $1) }
---   | STRVAL              { Const Position (ConstString  $1) }
---   | VAL_IDENT           { VarRef Position (makeQualified $1) }
---   | '[' ']'             { VarRef () (QualifiedName ["Data","List"] "Null") }
---   | '(' expr ')'        { $2 }
+type_application_type :: { Type }
+  : type_application_type primary_type
+    { TAp $1 $2 }
+  | primary_type
+    { $1 }
+
+function_type :: { Type }
+  : function_type '->' type_application_type
+    { TAp (TVar (QualifiedName ["--INTERNAL--"] "->") Star) $3 }
+  | type_application_type
+    { $1 }
+
+list_type :: { Type }
+  : '[' list_type ']'
+    { TAp (TVar (QualifiedName ["Data","List"] "List") Star) $2 }
+  | function_type
+    { $1 }
+
+bang_type :: { Type }
+  : list_type            { $1 }
+
+-- Statements in bang
+
+statements :: { [Stmt Position] }
+  :                      { [] }
+  | statements statement { $1 ++ [$2] }
+
+statement :: { Stmt Position }
+  : assignment_statement ';' { $1 }
+  | case_statement ';'       { $1 }
+  | expression ';'           { SExpr $2 $1 }
+
+assignment_statement :: { Stmt Position }
+  : value_ident '=' expression -- FIXME: Too restrictive!
+    { SBind $2 $1 (SExpr $2 $3) }
+
+case_statement :: { Stmt Position }
+  : 'case' expression 'of' case_items
+    { SCase $1 $2 $4 }
+
+case_items :: { [(Pattern,Maybe (Expr Position),(Expr Position))] }
+  : case_item            { [$1] }
+  | case_items case_item { $1 ++ [$2] }
+
+case_item :: { (Pattern, Maybe (Expr Position), (Expr Position)) }
+  : pattern mguard '->' expression { ($1, $2, $4) }
+
+mguard :: { Maybe (Expr Position) }
+  :                 { Nothing }
+  | '|' expression  { Just $2 }
+
+-- Patterns for pattern matching
+
+infix_operator :: { QualifiedName }
+  : OP_IDENT             { makeQualified $1 }
+  | '`' VAL_IDENT '`'    { makeQualified $2 }
+
+pattern_primary :: { Pattern }
+  : TYPE_IDENT           { PVar (makeQualified $1) }
+  | VAL_IDENT            { PVar (makeQualified $1) }
+  | '[' ']'               { PVar (QualifiedName ["Data","List"] "NULL") }
+  | INTVAL                { let (Lexeme _ (TokInt (base, val))) = $1
+                            in PConst (ConstInteger base val) }
+  | FLOATVAL              { let (Lexeme _ (TokFloat val)) = $1
+                            in PConst (ConstFloat val) }
+  | CHARVAL               { let (Lexeme _ (TokChar val)) = $1
+                            in PConst (ConstChar val) }
+  | STRVAL                { let (Lexeme _ (TokString val)) = $1
+                            in PConst (ConstString val) }
+   | '(' pattern ')'      { $2 }
+
+pattern_infix :: { Pattern }
+  : pattern_infix infix_operator pattern_primary { PAp (PAp $1 (PVar $2)) $3 }
+  | pattern_primary                              { $1 }
+
+pattern_ap :: { Pattern }
+  : pattern_ap pattern_infix { PAp $1 $2 }
+  | pattern_infix            { $1 }
+
+pattern_name :: { Pattern }
+  : value_ident '@' pattern_name { PNamed $1 $3 }
+  | pattern_ap                   { $1 }
+
+pattern :: { Pattern }
+  : pattern_name         { $1 }
+
+-- Expressions in bang
+
+primary_expression :: { Expr Position }
+  : '(' expression ')'    { $2 }
+  | '[' ']'               { VarRef $1 (QualifiedName ["Data","List"] "NULL") }
+  | INTVAL                { let (Lexeme src (TokInt (base, val))) = $1
+                            in Const src (ConstInteger base val) }
+  | FLOATVAL              { let (Lexeme src (TokFloat val)) = $1
+                            in Const src (ConstFloat val) }
+  | CHARVAL               { let (Lexeme src (TokChar val)) = $1
+                            in Const src (ConstChar val) }
+  | STRVAL                { let (Lexeme src (TokString val)) = $1
+                            in Const src (ConstString val) }
+  | VAL_IDENT             { let l@(Lexeme src (TokValIdent name)) = $1
+                            in VarRef src (makeQualified l) }
+
+conditional_expression :: { Expr Position }
+  : primary_expression { $1 }
+
+infix_expression :: { Expr Position }
+  : infix_expression infix_operator conditional_expression
+    { App (getSpecial $1) (VarRef (getSpecial $1) $2) [$1, $3] }
+  | conditional_expression
+    { $1 }
+
+lambda_expression :: { Expr Position }
+  : '\\' arguments '->' infix_expression
+    { Lambda $1 $2 $4 }
+  | infix_expression
+    { $1 }
+
+arguments :: { [QualifiedName] }
+  : value_ident               { [$1] }
+  | arguments ',' value_ident { $1 ++ [$3] }
+
+application_expression :: { Expr Position }
+  : application_expression '(' app_args ')'
+    { App $2 $1 $3 }
+  | application_expression '(' ')'
+    { App $2 $1 [] }
+  | lambda_expression
+    { $1 }
+
+app_args :: { [Expr Position] }
+  : expression                { [$1] }
+  | app_args ',' expression   { $1 ++ [$3] }
+
+block_expression :: { Expr Position }
+  : '{' statements '}'        { Block $1 $2 }
+  | application_expression    { $1 }
+
+expression :: { Expr Position }
+  : block_expression          { $1 }
 
 {
 lexer :: (Lexeme -> Parser a) -> Parser a
@@ -375,8 +389,14 @@ happyError  = raiseP "Parse Error"
 pappend :: ([a],[b]) -> ([a],[b]) -> ([a],[b])
 pappend (a,b) (c,d) = (a++c,b++d)
 
-makeQualified :: String -> QualifiedName
-makeQualified str = QualifiedName prefixes name
+makeQualified :: Lexeme -> QualifiedName
+makeQualified (Lexeme _ (TokTypeIdent str)) = makeQualified' str
+makeQualified (Lexeme _ (TokValIdent  str)) = makeQualified' str
+makeQualified (Lexeme _ (TokOpIdent   str)) = makeQualified' str
+makeQualified _                             = error "makeQualified bad arg"
+
+makeQualified' :: String -> QualifiedName
+makeQualified' str = QualifiedName prefixes name
  where
   (prefixes,name) = loop str
   loop val =
@@ -385,5 +405,26 @@ makeQualified str = QualifiedName prefixes name
          then ([], pre)
          else let (pres, name) = loop rest
               in (pre:pres, name)
+
+postProcessDeclVal :: QualifiedName ->
+                      Maybe [(QualifiedName, Maybe Type)] ->
+                      Maybe Type ->
+                      (Position, Expr Position) ->
+                      Parser (Decl Position)
+postProcessDeclVal name margs mrettype (src, body) = do
+  final_type <- case mrettype of
+                   Nothing -> do
+                     name <- gensym
+                     return (TVar name Star)
+                   Just x  ->
+                     return x
+  case margs of
+    Nothing ->
+      return (DeclValue src [] final_type body)
+    Just [] ->
+      fail "Need to figure out empty arg items."
+    Just args ->
+      fail "Need to figure out non-empty arg items."
+
 }
 

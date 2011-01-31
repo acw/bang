@@ -37,7 +37,7 @@ pprtPosition p = posFile p ++ ":" ++ show (posLine p) ++ ":" ++ show (posCol p)
 data Token = LParen | RParen
            | LSquare | RSquare
            | LBrace | RBrace
-           | Bar | Semi | Comma
+           | Bar | Semi | Comma | BTick
            | TokTypeIdent String
            | TokValIdent String
            | TokOpIdent String
@@ -90,6 +90,7 @@ data ParserState = ParserState {
   , psChar    :: !Char
   , psPos     :: !Position
   , psLexCode :: !Int
+  , psGenNum  :: !Int
   }
  deriving (Show)
 
@@ -99,6 +100,7 @@ initParserState path bs = ParserState {
   , psChar    = '\n'
   , psPos     = initPosition path
   , psLexCode = 0
+  , psGenNum  = 0
   }
 
 -- --------------------------------------------------------------------------
@@ -137,4 +139,10 @@ runParser path bs (Parser m) =
   case runM m (initParserState path bs) of
     Right (a,_) -> Right a
     Left  err   -> Left err
+
+genstr :: Parser String
+genstr = do
+  st <- get
+  set st{ psGenNum = psGenNum st + 1 }
+  return $ "--gen" ++ show (psGenNum st)
 

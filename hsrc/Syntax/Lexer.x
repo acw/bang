@@ -58,6 +58,7 @@ $escape_char = [abfnrtv'\"\\]
   "|"                                             { emitT Bar     }
   ";"                                             { emitT Semi    }
   ","                                             { emitT Comma   }
+  "`"                                             { emitT BTick   }
 
 {
 
