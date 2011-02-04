@@ -38,5 +38,8 @@ test: $(TARGET)
 	@echo -n "Lex test ... "
 	@for f in `find . -name '*.bs'`; do $(TOPDIR)/$(TARGET) -lex $$f > /dev/null; done
 	@echo "passed."
+	@echo -n "Parse test ... "
+	@for f in `find . -name '*.bs'`; do $(TOPDIR)/$(TARGET) -parse $$f > /dev/null; done
+	@echo "passed."
 
 -include $(DEPENDS)
