@@ -197,7 +197,58 @@ newtype_decl :: { Decl Position }
 -- Class Declarations -------------------------------------------------------
 
 class_decl :: { Decl Position }
-  : 'class'       { undefined }
+  : 'class' type_ident class_args '{' class_items '}'
+  { DeclClass $1 [] $2 $3 $5 }
+
+class_args :: { [QualifiedName] }
+  : VAL_IDENT            { [makeQualified $1] }
+  | class_args VAL_IDENT { $1 ++ [makeQualified $2] }
+
+class_items :: { [ClassClause Position] }
+  : class_item             { [$1] }
+  | class_items class_item { $1 ++ [$2] }
+
+class_item :: { ClassClause Position }
+  : value_ident maybe_clargs cl_retarg maybe_body ';'
+  {% case ($2, $4) of
+      (Nothing, Nothing) -> return (ClassClause $5 $1 $3 Nothing)
+      (Just as, Nothing) -> 
+         let types = map snd as
+         in return (ClassClause $5 $1 (buildFunType types $3) Nothing)
+      (Nothing, Just bd) -> return (ClassClause $5 $1 $3 (Just bd))
+      (Just as, Just bd) ->
+         let types = map snd as
+             names = sequence (map fst as)
+         in case names of
+              Nothing  ->
+                raiseP "Can't have class implementation without argument names."
+              Just nms -> return (ClassClause $5 $1 (buildFunType types $3)
+                                    (Just $ Lambda $5 nms bd))
+  }
+
+maybe_clargs :: { Maybe [(Maybe QualifiedName, Type)] }
+  :                      { Nothing }
+  | '(' clargs ')'       { Just $2 }
+
+clargs :: { [(Maybe QualifiedName, Type)] }
+  : class_arg            { [$1] }
+  | clargs ',' class_arg { $1 ++ [$3] }
+
+class_arg :: { (Maybe QualifiedName, Type) }
+  : value_ident '::' bang_type { (Just $1, $3) }
+  |                  bang_type { (Nothing, $1) }
+
+cl_retarg :: { Type }
+  : '::' bang_type             { $2 }
+
+maybe_body :: { Maybe (Expr Position) }
+  :                            { Nothing }
+  | '=' expression             { Just $2 }
+  | '{' statements '}'         { Just (Block $1 $2) }
+
+type_ident :: { QualifiedName }
+  : TYPE_IDENT           { makeQualified $1 }
+  | '(' OP_IDENT ')'     { makeQualified $2 }
 
 -- Instance Declarations ----------------------------------------------------
 
@@ -446,7 +497,13 @@ postProcessDeclVal builder name margs mrettype (src, body) = do
                       return (TVar name Star)
                     Just x ->
                       return x
-      let ftype = foldr TAp final_type atypes
+      let ftype = buildFunType atypes final_type
       return (builder src [] ftype name (Lambda src anames body))
+
+buildFunType :: [Type] -> Type -> Type
+buildFunType [] finaltype = finaltype
+buildFunType (first:rest) finaltype =
+  TAp (TAp arrow first) (buildFunType rest finaltype)
+ where arrow = (TVar (makeQualified' "Data.Function") Star)
 }
 

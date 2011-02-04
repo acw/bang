@@ -36,7 +36,7 @@ data Show a => Decl a =
     DeclData a [Type] QualifiedName [QualifiedName] [DataClause a]
   | DeclType a [Type]
   | DeclNewtype a [Type]
-  | DeclClass a [Type] 
+  | DeclClass a [Type] QualifiedName [QualifiedName] [ClassClause a]
   | DeclInstance a [Type]
   | DeclValue a [Type] Type QualifiedName (Expr a)
   | DeclExport a (Decl a)
@@ -46,13 +46,16 @@ addTypeRestrictions :: Show a => [Type] -> Decl a -> Decl a
 addTypeRestrictions rs (DeclData     s _ a b c)   = DeclData s rs a b c
 addTypeRestrictions rs (DeclType     s _)         = DeclType s rs
 addTypeRestrictions rs (DeclNewtype  s _)         = DeclNewtype s rs
-addTypeRestrictions rs (DeclClass    s _)         = DeclClass s rs
+addTypeRestrictions rs (DeclClass    s _ a b c)   = DeclClass s rs a b c
 addTypeRestrictions rs (DeclInstance s _)         = DeclInstance s rs
 addTypeRestrictions rs (DeclValue    s _ n a b)   = DeclValue s rs n a b
 addTypeRestrictions rs (DeclExport   s d)         =
   DeclExport s (addTypeRestrictions rs d)
 
 data DataClause a = DataClause a QualifiedName [Maybe QualifiedName] [Type]
+ deriving (Show)
+
+data ClassClause a = ClassClause a QualifiedName Type (Maybe (Expr a))
  deriving (Show)
 
 data Show a => Expr a =
