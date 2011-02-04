@@ -28,6 +28,10 @@ main = do
             Right ress -> do
               mapM_ putStrLn ress
               putStrLn "Successful lex."
+    ["-parse",path] -> do
+      ast <- loadModule path
+      putStrLn "Successful parse!"
+      putStrLn (show ast)
     _ -> fail "Unacceptable arguments."
 
 pullTokens :: Parser [String]
