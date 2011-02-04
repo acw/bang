@@ -5,17 +5,17 @@ import Data.Bool;
 export eq(x :: a, y :: a) :: Bool = prim%eq(x,y);
 
 class Eq a {
-  (==)(x :: a, y :: a) :: Bool = not (x /= y);
-  (/=)(x :: a, y :: a) :: Bool = not (x == y);
+  (==)(x :: a, y :: a) :: Bool = not (x != y);
+  (!=)(x :: a, y :: a) :: Bool = not (x == y);
 }
 
 instance Eq () {
   (==)(x,y) = True;
-  (/=)(x,y) = False;
+  (!=)(x,y) = False;
 }
 
 instance Eq Bool {
-  (/=)(x,y) = x ^ y;
+  (!=)(x,y) = x ^ y;
 }
 
 class SafelyConvertable a b {

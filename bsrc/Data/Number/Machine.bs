@@ -5,12 +5,12 @@ type Word = prim%Word;
 
 export instance Eq Int {
   (==)(x,y) = prim%inteq(x,y);
-  (/=)(x,y) = prim%intneq(x,y);
+  (!=)(x,y) = prim%intneq(x,y);
 }
 
 export instance Eq Word {
   (==)(x,y) = prim%wordeq(x,y);
-  (/=)(x,y) = prim%wordneq(x,y);
+  (!=)(x,y) = prim%wordneq(x,y);
 }
 
 export instance Num Int {
