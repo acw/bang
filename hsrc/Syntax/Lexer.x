@@ -21,7 +21,7 @@ $bindigit = [01]
 $typestart   = [A-Z\_]
 $valstart    = [a-z\_]
 $identrest   = [a-zA-Z0-9\_\.]
-$opident     = [\~\!\@\#\$\%\^\&\*\+\-\=\.\<\>\?\_]
+$opident     = [\~\!\@\#\$\%\^\&\*\+\-\=\.\<\>\?\_\|]
 $escape_char = [abfnrtv'\"\\]
 
 :-
@@ -58,7 +58,6 @@ $escape_char = [abfnrtv'\"\\]
   "]"                                             { emitT RSquare }
   "{"                                             { emitT LBrace  }
   "}"                                             { emitT RBrace  }
-  "|"                                             { emitT Bar     }
   ";"                                             { emitT Semi    }
   ","                                             { emitT Comma   }
   "`"                                             { emitT BTick   }

@@ -35,6 +35,7 @@ import qualified Codec.Binary.UTF8.Generic as UTF8
 
 -- symbols
   '='        { Lexeme $$ (TokOpIdent  "=")        }
+  '|'        { Lexeme $$ (TokOpIdent  "|")        }
   '->'       { Lexeme $$ (TokOpIdent  "->")       }
   '@'        { Lexeme $$ (TokOpIdent  "@")       }
   '::'       { Lexeme $$ (TokOpIdent  "::")       }
@@ -45,7 +46,6 @@ import qualified Codec.Binary.UTF8.Generic as UTF8
   ']'        { Lexeme $$ RSquare }
   '{'        { Lexeme $$ LBrace  }
   '}'        { Lexeme $$ RBrace  }
-  '|'        { Lexeme $$ Bar     }
   ';'        { Lexeme $$ Semi    }
   ','        { Lexeme $$ Comma   }
   '`'        { Lexeme $$ BTick   }
@@ -229,6 +229,7 @@ optional_type :: { Maybe Type }
 value_ident :: { QualifiedName }
   : VAL_IDENT            { makeQualified $1 }
   | '(' OP_IDENT ')'     { makeQualified $2 }
+  | '(' '|' ')'          { makeQualified (Lexeme $2 (TokOpIdent "|")) }
 
 value_body :: { (Position, Expr Position) }
   : '=' expression       { ($1, $2) }
