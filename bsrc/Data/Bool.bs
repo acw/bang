@@ -1,11 +1,11 @@
 module Data.Bool
 
-datatype Bool = True | False;
+datatype Bool = True() | False();
 
 export (&)(x :: Bool, y :: Bool) :: Bool = prim%and;
 export (|)(x :: Bool, y :: Bool) :: Bool = prim%or;
 export (^)(x :: Bool, y :: Bool) :: Bool = prim%xor;
-export (not)(x :: Bool) :: Bool = prim%not;
+export not(x :: Bool) :: Bool = prim%not;
 export otherwise :: Bool = True;
 
 
