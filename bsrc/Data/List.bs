@@ -7,42 +7,49 @@ export datatype List a =
 
 export (++)(a :: [a], b :: [a]) :: [a]
 {
-  case a of
-    []       -> b
-    (af:ar)  -> case b of
-                  [] -> a
-                  _  -> af:(ar ++ b)
+  case a {
+    []       -> b;
+    (af:ar)  ->
+      case b {
+        [] -> a;
+        _  -> af:(ar ++ b);
+      }
+  }
 };
 
 export null(ls :: [a]) :: Bool
 {
-  case ls of
-    [] -> True
-    _  -> False
+  case ls {
+    [] -> True;
+    _  -> False;
+  }
 };
 
 export length(ls :: [a]) :: Int
 {
-  case ls of
-    []     -> 0
-    _:rest -> length(rest)
+  case ls {
+    []       -> 0;
+    (_:rest) -> 1 + length(rest);
+  }
 };
 
 export reverse(ls :: [a]) :: [a]
 {
-  helper(xs,acc) = {
-    case xs of
-      []       -> acc
-      (a:rest) -> helper(rest, (a:acc))
-  }
+  let helper(xs,acc) = {
+    case xs {
+      []       -> acc;
+      (a:rest) -> helper(rest, (a:acc));
+    }
+  };
 
   helper(ls, []);
 };
 
 export restrict(Eq a) find(f :: a -> Bool, ls :: [a]) :: Maybe a
 {
-  case ls of
-    []             -> False
-    (a:_)    | f a -> a
-    (_:rest)       -> find(f, rest)
+  case ls {
+    []              -> False;
+    (a:_)    | f(a) -> a;
+    (_:rest)        -> find(f, rest);
+  }
 };

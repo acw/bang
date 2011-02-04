@@ -1,0 +1,93 @@
+module Data.Number
+
+import Data.Object
+
+export restrict(Eq a) Num a {
+  (+)(x :: a, y :: a) :: a;
+  (*)(x :: a, y :: a) :: a;
+  (-)(x :: a, y :: a) :: a;
+};
+
+export restrict(Num a) Signed a {
+  negate(x :: a) :: a;
+  abs(x :: a) :: a;
+  signum(x :: a) :: a;
+};
+
+export restrict(Num a) Unsigned a {
+};
+
+export class Bounded a {
+  minBound :: a;
+  maxBound :: a;
+};
+
+export datatype Ordering = Before | Equal | After;
+
+export class restrict(Eq a) Ord a {
+  compare(_ :: a, _ :: a) :: Ordering;
+
+  (<)(x :: a, y :: b) :: Bool
+  {
+    case compare(x,y) {
+      Before -> True;
+      _      -> False;
+    }
+  }
+
+  (>)(x :: a, y :: b) :: Bool
+  {
+    case compare(x,y) {
+      After -> True;
+      _     -> False;
+    }
+  }
+
+  (<=)(x :: a, y :: b) :: Bool
+  {
+    case compare(x,y) {
+      After -> False;
+      _     -> True;
+    }
+  }
+
+  (>=)(x :: a, y :: b) :: Bool
+  {
+    case compare(x,y) {
+      Before -> False;
+      _      -> True;
+    }
+  }
+
+  max(x :: a, y :: b)  :: a
+  {
+    case compare(x,y) {
+      Before -> y;
+      _      -> x;
+    }
+  }
+
+  min(x :: a, y :: b)  :: b
+  {
+    case compare(x,y) {
+      After  -> y;
+      _      -> x;
+  }
+}
+
+export class Enum a {
+  succ(a) :: a;
+  pred(a) :: a;
+  toEnum(Integer) :: a;
+  fromEnum(a) :: Integer;
+  enumFromTo(a, a) :: [a];
+  enumFromThenTo(a, a, a) :: [a];
+}
+
+export restrict(Ord a, Num a)
+createEnum(s :: a, e :: a, m :: a) :: [a] = s : createEnum(s + m, e, m);
+
+export restrict(Ord a, Num a)
+diff(x :: a, y :: a) :: a = if x > y then x - y else y - x;
+
+

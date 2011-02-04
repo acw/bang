@@ -1,0 +1,132 @@
+module Control.Monad
+
+import Data.Number
+
+export class Monad m {
+  (>>=)(left :: m a, right :: a -> m b) :: m b;
+  (>>)(left :: m a, right :: m b) :: m b = left >>= (\ _ -> right)
+  return(a :: a) :: m a;
+}
+
+export restrict(Monad m) mapM(f :: a -> m b, ls :: [a]) :: m [b]
+{
+  case ls {
+    []       -> return([]);
+    (x:rest) -> return((:) `ap` f x `ap` mapM(f,rest));
+  }
+}
+
+export restrict(Monad m) mapM_(f :: a -> m b, ls :: [a]) :: m ()
+{
+  case ls {
+    []       -> return ();
+    (x:rest) -> f(x) >> mapM_(f,rest);
+}
+
+export restrict(Monad m) forM(ls :: [a], f :: a -> m b) :: m [b] = mapM(ls, f);
+export restrict(Monad m) forM_(ls :: [a], f :: a -> m b) :: m () = mapM_(ls, f);
+
+export restrict(Monad m) sequence(lsM :: [m a]) :: m [a]
+{
+  case lsM {
+    []       -> return([]);
+    (x:rest) -> return((:) `ap` x `ap` sequence(rest));
+}
+
+export restrict(Monad m) sequence_(lsM :: [m a]) :: m ()
+{
+  case lsM {
+    []       -> return(());
+    (x:rest) -> x >> sequence(rest);
+}
+
+export restrict(Monad m)
+(=<<)(cont :: a -> m b, start :: m a) :: m b
+  = start >>= cont;
+
+export restrict(Monad m) 
+(>=>)(left :: a -> m b, right :: b -> m c, x :: a) :: m c
+{
+  step1 = left x
+  right step1
+}
+
+export restrict(Monad m)
+(<=<)(right :: b -> m c, left :: a -> m b, x :: a) :: m c
+  = (>=>)(left,right,x)
+
+export restrict(Monad m) forever(action :: m a) :: m b
+  = action >> forever(action)
+
+export restrict(Monad m) void(action :: m a) :: m () = action >> return(())
+
+export restrict(Monad m) join(actionM :: m (m a)) :: m a
+{
+  val = actionM;
+  return(val);
+}
+
+export restrict(Monad m) filterM(f :: a -> m Bool, xs :: [a]) :: m [a]
+{
+  case xs {
+    []       -> return(());
+    (x:rest) -> if f(x)
+                  then return(x:) `ap` filterM(f,rest)
+                  else filterM(f,rest);
+  }
+}
+
+export restrict(Monad m) foldM(f :: a -> b -> m a, base :: a, xs :: [b]) :: m a
+{
+  case xs {
+    []       -> return(base);
+    (x:rest) -> {
+         newbase = f(base,x);
+         foldM(f,newbase,rest);
+      }
+}
+
+export restrict(Monad m) foldM_(f :: a -> b -> m a, base :: a, xs :: [b]) ::m ()
+{
+  case xs {
+    []       -> return(());
+    (x:rest) -> {
+        newbase = f(base,x);
+        foldM_(f,newbase,rest);
+    }
+}
+
+export restrict(Monad m, Unsigned u)
+replicateM(count :: u, action :: m a) :: m [a]
+{
+  if count == 0
+    then return([])
+    else return( return((:)) `ap` action `ap` replicateM(count-1,action) );
+}
+
+export restrict(Monad m, Unsigned u)
+replicateM_(count :: u, action :: m a) :: m ()
+{
+  if count == 0
+    then return(())
+    else action >> replicateM_(count - 1, action);
+}
+
+export restrict(Monad m) ap(mf :: m (a -> b), ma :: m a) :: m b
+{
+  func <- mf
+  a    <- ma
+  return(func(a));
+}
+
+export restrict(Monad m) liftM(f :: a -> b, ma :: m a) :: m b
+  = return f `ap` ma
+export restrict(Monad m) liftM2(f :: a -> b -> c, ma :: m a, mb :: m b) :: m c
+  = return f `ap` ma `ap` mb
+export restrict(Monad m) liftM3(f :: a -> b -> c -> d,
+                                ma :: m a, mb :: m b, mc :: m c)
+  = return f `ap` ma `ap` mb `ap` mc
+export restrict(Monad m) liftM4(f :: a -> b -> c -> d -> e,
+                                ma :: m a, mb :: m b, mc :: m c, md :: m d)
+  = return f `ap` ma `ap` mb `ap` mc
+

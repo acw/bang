@@ -1,0 +1,106 @@
+module Data.Number.Machine
+
+type Int = prim%Int;
+type Word = prim%Word;
+
+export instance Eq Int {
+  (==)(x,y) = prim%inteq(x,y);
+  (/=)(x,y) = prim%intneq(x,y);
+}
+
+export instance Eq Word {
+  (==)(x,y) = prim%wordeq(x,y);
+  (/=)(x,y) = prim%wordneq(x,y);
+}
+
+export instance Num Int {
+  (+)(x,y) = prim%intplus(x,y);
+  (-)(x,y) = prim%intminus(x,y);
+  (*)(x,y) = prim%intmult(x,y);
+}
+
+export instance Num Word {
+  (+)(x,y) = prim%wordplus(x,y);
+  (-)(x,y) = prim%wordminus(x,y);
+  (*)(x,y) = prim%wordmult(x,y);
+}
+
+export instance Signed Int {
+  negate = prim%intnegate;
+  abs    = prim%intabs;
+  signum(x) = case x {
+                _ | x < 0     -> -1;
+                  | x == 0    ->  0;
+                  | otherwise -> 1;
+              }
+}
+
+export instance Unsigned Word;
+
+export instance Bounded Int {
+  minBound = prim%intminbound;
+  maxBound = prim%intmaxbound;
+}
+
+export instance Bounded Word {
+  minBound = 0;
+  maxBound = prim%wordmaxbound;
+}
+
+export instance Ord Int {
+  compare(x,y) = if x == y
+                   then Equal
+                   else if x < y
+                           then Before
+                           else After
+  (<) = prim%intlt
+  (<=) = prim%intlte
+  (>)  = prim%intgt
+  (>=) = prim%intgte
+  max(x,y) = if x > y then x else y;
+  min(x,y) = if x < y then x else y;
+}
+
+export instance Ord Word {
+  compare(x,y) = if x == y
+                   then Equal
+                   else if x < y
+                           then Before
+                           else After
+  (<)  = prim%wordlt
+  (<=) = prim%wordlte
+  (>)  = prim%wordgt
+  (>=) = prim%wordgte
+  max(x,y) = if x > y then x else y;
+  min(x,y) = if x < y then x else y;
+}
+
+export instance Enum Int {
+  succ(x) = x + 1;
+  pred(x) = x - 1;
+  toEnum(x) = if x > safeConvert(maxBound :: Int)
+                then maxBound
+                else if x < safeConvert(minBound :: Int)
+                       then minBound
+                       else unsafeConvert(x)
+  fromEnum(x) = safeConvert(x)
+  enumFromTo(x,y) = if x > y then createEnum(x,y,-1) else createEnum(x,y,1);
+  enumFromThenTo(x,y) = let direction = if x > y then -1 else 1
+                            amt       = diff x y
+                        in createEnum(x,y,amt * direction)
+}
+
+export instance Enum Word {
+  succ(x) = x + 1;
+  pred(x) = x - 1;
+  toEnum(x) = if x > safeConvert(maxBound :: Word)
+                then maxBound
+                else if x < safeConvert(minBound :: Word)
+                       then minBound
+                       else unsafeConvert(x)
+  fromEnum(x) = safeConvert(x)
+  enumFromTo(x,y) = if x > y then createEnum(x,y,-1) else createEnum(x,y,1);
+  enumFromThenTo(x,y) = let direction = if x > y then -1 else 1
+                            amt       = diff x y
+                        in createEnum(x,y,amt * direction)
+}
