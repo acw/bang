@@ -28,14 +28,15 @@ main = do
             Right ress -> do
               mapM_ putStrLn ress
               putStrLn "Successful lex."
+    _ -> fail "Unacceptable arguments."
 
 pullTokens :: Parser [String]
 pullTokens = do
   tok <- scan
   case tok of
-    Lexeme pos tok -> do
-      let res = show pos ++ " " ++ show tok
-      if tok == TokEOF
+    Lexeme pos tok' -> do
+      let res = show pos ++ " " ++ show tok'
+      if tok' == TokEOF
         then return [res]
         else return (res :) `ap` pullTokens
 

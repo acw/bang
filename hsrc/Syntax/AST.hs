@@ -38,18 +38,18 @@ data Show a => Decl a =
   | DeclNewtype a [Type]
   | DeclClass a [Type] 
   | DeclInstance a [Type]
-  | DeclValue a [Type] Type (Expr a)
+  | DeclValue a [Type] Type QualifiedName (Expr a)
   | DeclExport a (Decl a)
  deriving (Show)
 
 addTypeRestrictions :: Show a => [Type] -> Decl a -> Decl a
-addTypeRestrictions rs (DeclData     s _ a b c) = DeclData s rs a b c
-addTypeRestrictions rs (DeclType     s _)       = DeclType s rs
-addTypeRestrictions rs (DeclNewtype  s _)       = DeclNewtype s rs
-addTypeRestrictions rs (DeclClass    s _)       = DeclClass s rs
-addTypeRestrictions rs (DeclInstance s _)       = DeclInstance s rs
-addTypeRestrictions rs (DeclValue    s _ a b)   = DeclValue s rs a b
-addTypeRestrictions rs (DeclExport   s d)     =
+addTypeRestrictions rs (DeclData     s _ a b c)   = DeclData s rs a b c
+addTypeRestrictions rs (DeclType     s _)         = DeclType s rs
+addTypeRestrictions rs (DeclNewtype  s _)         = DeclNewtype s rs
+addTypeRestrictions rs (DeclClass    s _)         = DeclClass s rs
+addTypeRestrictions rs (DeclInstance s _)         = DeclInstance s rs
+addTypeRestrictions rs (DeclValue    s _ n a b)   = DeclValue s rs n a b
+addTypeRestrictions rs (DeclExport   s d)         =
   DeclExport s (addTypeRestrictions rs d)
 
 data DataClause a = DataClause a QualifiedName [Maybe QualifiedName] [Type]
@@ -62,20 +62,23 @@ data Show a => Expr a =
   | App a (Expr a) [Expr a]
   | Block a [Stmt a]
   | Lambda a [QualifiedName] (Expr a)
+  | Let a Type QualifiedName (Expr a) (Expr a)
  deriving (Show)
 
 getSpecial :: Show a => Expr a -> a
-getSpecial (Const a _)    = a
-getSpecial (VarRef a _)   = a
-getSpecial (Cond a _ _ _) = a
-getSpecial (App a _ _)    = a
-getSpecial (Block a _)    = a
-getSpecial (Lambda a _ _) = a
+getSpecial (Const a _)     = a
+getSpecial (VarRef a _)    = a
+getSpecial (Cond a _ _ _)  = a
+getSpecial (App a _ _)     = a
+getSpecial (Block a _)     = a
+getSpecial (Lambda a _ _)  = a
+getSpecial (Let a _ _ _ _) = a
 
 data Show a => Stmt a =
     SExpr a (Expr a)
   | SBind a QualifiedName (Stmt a)
-  | SCase a (Expr a) [(Pattern,Maybe (Expr a),Expr a)]
+  | SLet  a Type QualifiedName (Expr a)
+  | SCase a (Expr a) [(Pattern,Maybe (Expr a),Stmt a)]
  deriving (Show)
 
 data Pattern =

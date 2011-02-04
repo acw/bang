@@ -27,6 +27,8 @@ import qualified Codec.Binary.UTF8.Generic as UTF8
   'instance'  { Lexeme $$ (TokValIdent "instance")  }
   'qualified' { Lexeme $$ (TokValIdent "qualified") }
   'as'        { Lexeme $$ (TokValIdent "as")        }
+  'let'       { Lexeme $$ (TokValIdent "let")       }
+  'in'        { Lexeme $$ (TokValIdent "in")        }
   'case'      { Lexeme $$ (TokValIdent "case")      }
   'of'        { Lexeme $$ (TokValIdent "of")        }
   'restrict'  { Lexeme $$ (TokValIdent "restrict")  }
@@ -206,7 +208,7 @@ instance_decl :: { Decl Position }
 
 value_decl :: { Decl Position }
   : value_ident optional_args optional_type value_body
-    {% postProcessDeclVal $1 $2 $3 $4 }
+    {% postProcessDeclVal DeclValue $1 $2 $3 $4 }
 
 
 optional_args :: { Maybe [(QualifiedName, Maybe Type)] }
@@ -268,23 +270,25 @@ statements :: { [Stmt Position] }
 
 statement :: { Stmt Position }
   : assignment_statement ';' { $1 }
-  | case_statement ';'       { $1 }
+  | case_statement           { $1 }
   | expression ';'           { SExpr $2 $1 }
 
 assignment_statement :: { Stmt Position }
   : value_ident '=' expression -- FIXME: Too restrictive!
     { SBind $2 $1 (SExpr $2 $3) }
+  | 'let' value_ident optional_args optional_type value_body
+    {% postProcessDeclVal (\ s _ t n e -> SLet s t n e) $2 $3 $4 $5 }
 
 case_statement :: { Stmt Position }
-  : 'case' expression 'of' case_items
+  : 'case' expression '{' case_items '}'
     { SCase $1 $2 $4 }
 
-case_items :: { [(Pattern,Maybe (Expr Position),(Expr Position))] }
+case_items :: { [(Pattern,Maybe (Expr Position),(Stmt Position))] }
   : case_item            { [$1] }
   | case_items case_item { $1 ++ [$2] }
 
-case_item :: { (Pattern, Maybe (Expr Position), (Expr Position)) }
-  : pattern mguard '->' expression { ($1, $2, $4) }
+case_item :: { (Pattern, Maybe (Expr Position), (Stmt Position)) }
+  : pattern mguard '->' statement { ($1, $2, $4) }
 
 mguard :: { Maybe (Expr Position) }
   :                 { Nothing }
@@ -297,8 +301,8 @@ infix_operator :: { QualifiedName }
   | '`' VAL_IDENT '`'    { makeQualified $2 }
 
 pattern_primary :: { Pattern }
-  : TYPE_IDENT           { PVar (makeQualified $1) }
-  | VAL_IDENT            { PVar (makeQualified $1) }
+  : TYPE_IDENT            { PVar (makeQualified $1) }
+  | VAL_IDENT             { PVar (makeQualified $1) }
   | '[' ']'               { PVar (QualifiedName ["Data","List"] "NULL") }
   | INTVAL                { let (Lexeme _ (TokInt (base, val))) = $1
                             in PConst (ConstInteger base val) }
@@ -338,11 +342,18 @@ primary_expression :: { Expr Position }
                             in Const src (ConstChar val) }
   | STRVAL                { let (Lexeme src (TokString val)) = $1
                             in Const src (ConstString val) }
+  | TYPE_IDENT            { let l@(Lexeme src (TokTypeIdent name)) = $1
+                            in VarRef src (makeQualified l) }
   | VAL_IDENT             { let l@(Lexeme src (TokValIdent name)) = $1
                             in VarRef src (makeQualified l) }
 
+let_expression :: {Expr Position}
+  : 'let' value_ident optional_args optional_type value_body 'in' let_expression
+    {% postProcessDeclVal (\ s _ t n b -> Let s t n b $7) $2 $3 $4 $5 }
+  | primary_expression { $1 }
+
 conditional_expression :: { Expr Position }
-  : primary_expression { $1 }
+  : let_expression { $1 }
 
 infix_expression :: { Expr Position }
   : infix_expression infix_operator conditional_expression
@@ -403,15 +414,17 @@ makeQualified' str = QualifiedName prefixes name
     let (pre,rest) = span (/= '.') val
     in if rest == ""
          then ([], pre)
-         else let (pres, name) = loop rest
+         else let (pres, name) = loop (tail rest)
               in (pre:pres, name)
 
-postProcessDeclVal :: QualifiedName ->
-                      Maybe [(QualifiedName, Maybe Type)] ->
-                      Maybe Type ->
-                      (Position, Expr Position) ->
-                      Parser (Decl Position)
-postProcessDeclVal name margs mrettype (src, body) = do
+postProcessDeclVal :: 
+  (Position -> [Type] -> Type -> QualifiedName -> Expr Position -> a) ->
+  QualifiedName ->
+  Maybe [(QualifiedName, Maybe Type)] ->
+  Maybe Type ->
+  (Position, Expr Position) ->
+  Parser a
+postProcessDeclVal builder name margs mrettype (src, body) = do
   final_type <- case mrettype of
                    Nothing -> do
                      name <- gensym
@@ -420,11 +433,19 @@ postProcessDeclVal name margs mrettype (src, body) = do
                      return x
   case margs of
     Nothing ->
-      return (DeclValue src [] final_type body)
+      return (builder src [] final_type name body)
     Just [] ->
       fail "Need to figure out empty arg items."
-    Just args ->
-      fail "Need to figure out non-empty arg items."
-
+    Just args -> do
+      let anames  = map fst args
+      atypes <- forM (map snd args) $ \ x ->
+                  case x of
+                    Nothing -> do
+                      name <- gensym
+                      return (TVar name Star)
+                    Just x ->
+                      return x
+      let ftype = foldr TAp final_type atypes
+      return (builder src [] ftype name (Lambda src anames body))
 }
 
