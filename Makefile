@@ -34,7 +34,9 @@ clean:
 	$(FIND) . -name '*.o' -delete
 	$(RM) -f $(TARGET) $(OBJECTS) $(EXTRA_CLEAN)
 
-foo:
-	@echo $(DEPENDS)
+test: $(TARGET)
+	@echo -n "Lex test ... "
+	@for f in `find . -name '*.bs'`; do $(TOPDIR)/$(TARGET) -lex $$f > /dev/null; done
+	@echo "passed."
 
 -include $(DEPENDS)
