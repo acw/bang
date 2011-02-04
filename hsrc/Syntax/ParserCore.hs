@@ -6,6 +6,7 @@ module Syntax.ParserCore where
 import Control.Applicative(Applicative)
 import qualified Data.ByteString as S
 import MonadLib
+import System.IO
 
 -- --------------------------------------------------------------------------
 -- Positions
@@ -37,7 +38,7 @@ pprtPosition p = posFile p ++ ":" ++ show (posLine p) ++ ":" ++ show (posCol p)
 data Token = LParen | RParen
            | LSquare | RSquare
            | LBrace | RBrace
-           | Bar | Semi | Comma | BTick
+           | Bar | Semi | Comma | BTick | LLambda
            | TokTypeIdent String
            | TokValIdent String
            | TokOpIdent String
@@ -74,7 +75,7 @@ data Error = Error ErrorType String Position
  deriving (Show)
 
 printError :: Error -> IO ()
-printError (Error etype str pos) = putStrLn errstr
+printError (Error etype str pos) = hPutStrLn stderr errstr
  where
   errstr = pprtPosition pos ++ ":" ++ etypeStr ++ ": " ++ str
   etypeStr = case etype of

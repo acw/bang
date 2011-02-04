@@ -40,7 +40,9 @@ $escape_char = [abfnrtv'\"\\]
 
 -- Identifier
   $typestart $identrest*                           { emitS TokTypeIdent }
+  "prim%" $typestart $identrest*                   { emitS TokTypeIdent }
   $valstart $identrest*                            { emitS TokValIdent  }
+  "prim%" $valstart $identrest*                    { emitS TokValIdent  }
   $opident+                                        { emitS TokOpIdent   }
   ":"+                                             { emitS TokOpIdent   }
 
@@ -60,6 +62,7 @@ $escape_char = [abfnrtv'\"\\]
   ";"                                             { emitT Semi    }
   ","                                             { emitT Comma   }
   "`"                                             { emitT BTick   }
+  [\\]                                            { emitT LLambda }
 
 {
 

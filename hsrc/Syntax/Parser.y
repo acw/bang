@@ -38,7 +38,7 @@ import qualified Codec.Binary.UTF8.Generic as UTF8
   '->'       { Lexeme $$ (TokOpIdent  "->")       }
   '@'        { Lexeme $$ (TokOpIdent  "@")       }
   '::'       { Lexeme $$ (TokOpIdent  "::")       }
-  '\\'       { Lexeme $$ (TokOpIdent  "\\")       }
+  '\\'       { Lexeme $$ LLambda  }
   '('        { Lexeme $$ LParen  }
   ')'        { Lexeme $$ RParen  }
   '['        { Lexeme $$ LSquare }
