@@ -6,3 +6,7 @@
 hsrc/Syntax/Lexer.hs
 hsrc/Syntax/Parser.hs
 bang
+
+.cabal-sandbox/
+dist/
+cabal.sandbox.config

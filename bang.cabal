@@ -1,0 +1,27 @@
+name:                bang
+version:             0.1.0.0
+synopsis:            A fun little language to explore building a compiler. Again.
+homepage:            http://github.com/acw/bang
+license:             BSD3
+license-file:        LICENSE
+author:              Adam Wick <awick@uhsure.com>
+maintainer:          Adam Wick <awick@uhsure.com>
+
+category:            Development
+build-type:          Simple
+cabal-version:       >=1.10
+
+
+executable bang
+  main-is:             Main.hs
+  build-depends:       base       >= 4.8     && < 4.9,
+                       bytestring >= 0.10    && < 0.11,
+                       cmdargs    >= 0.10.14 && < 0.12
+  hs-source-dirs:      src
+  build-tools:         alex, happy
+  default-language:    Haskell2010
+  other-extensions:    DeriveDataTypeable
+  other-modules:
+                       Paths_bang,
+                       Syntax.CommandLine
+  

@@ -1,3 +1,11 @@
+import Syntax.CommandLine
+
+main :: IO ()
+main = getCommand >>= \ mode ->
+  putStrLn (show mode)
+
+
+{-
 import Control.Exception
 import Control.Monad
 import qualified Data.ByteString as S
@@ -53,3 +61,4 @@ loadModule path = do
       case runParser path txt parseModule of
         Left err  -> printError err >> exitWith (ExitFailure 1)
         Right ast -> return ast
+-}
