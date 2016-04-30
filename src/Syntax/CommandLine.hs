@@ -1,47 +1,64 @@
-{-# LANGUAGE DeriveDataTypeable #-}
 module Syntax.CommandLine(
-         Bang(..), getCommand
+         BangCommand(..)
+       , BangOperation(..)
+       , LexerOptions(..)
+       , getCommand
+       , helpString
        )
  where
 
 import Data.Version(showVersion)
 import Paths_bang(version)
-import System.Console.CmdArgs hiding (verbosity)
+import Options.Applicative
+import Options.Applicative.Help
 
-data Bang = Bang {
-       verbosity :: Word
-     , files     :: [FilePath]
-     , mode      :: BangMode
+data BangCommand = BangCommand {
+       cmdVerbosity  :: Verbosity
+     , cmdOutputFile :: FilePath
+     , cmdCommand    :: BangOperation
      }
- deriving (Data, Typeable, Show, Eq)
+ deriving (Show)
 
-data BangMode = Lex | Parse
- deriving (Data, Typeable, Show, Eq)
+data Verbosity = Silent | Normal | Verbose
+ deriving (Eq, Show)
 
-lexer :: Bang
-lexer = Bang {
-         verbosity = 0  &= name "verbose" &= name "v"
-       , files     = [] &= args
-       , mode      = Lex
-       } &= name "lex"
+verboseOption :: Parser Verbosity
+verboseOption = flag Normal Silent  (short 'q' <> long "quiet")
+            <|> flag Normal Verbose (short 'v' <> long "verbose")
 
-parser :: Bang
-parser = Bang {
-         verbosity = 0  &= name "verbose" &= name "v"
-       , files     = [] &= args
-       , mode      = Parse
-       } &= name "parse"
+outputFile :: Parser FilePath
+outputFile = strOption (short 'o' <> long "output-file" <> metavar "FILE"
+                      <> help "The file to output as a result of this action."
+                      <> value "/dev/stdout" <> showDefault)
 
-bang :: Bang
-bang = modes [lexer, parser]
-  &= versionArg [explicit, name "version", summary programInfo]
-  &= summary (programInfo ++ ", " ++ copyright)
-  &= help "A nifty little compiler for a new language"
-  &= helpArg [explicit, name "help", name "h", name "?"]
-  &= program "bang"
- where
-  programInfo = "bang version " ++ showVersion version
-  copyright = "(C) 2016 Adam Wick"
+data BangOperation = Help
+                   | Lex LexerOptions
+ deriving (Show)
 
-getCommand :: IO Bang
-getCommand = cmdArgs bang
+bangOperation :: Parser BangOperation
+bangOperation = subparser $
+  command "help" (pure Help `withInfo` "Describe common commands.") <>
+  command "lex" (parseLex `withInfo` "Lex a file into its component tokens.")
+
+withInfo :: Parser a -> String -> ParserInfo a 
+withInfo opts desc = info (helper <*> opts) (progDesc desc)
+
+data LexerOptions = LexerOptions {
+       lexInputFile :: FilePath
+     }
+ deriving (Show)
+
+parseLex :: Parser BangOperation
+parseLex = Lex <$> parseLexOptions
+
+parseLexOptions :: Parser LexerOptions
+parseLexOptions = LexerOptions <$> argument str (metavar "FILE")
+
+parseOptions :: Parser BangCommand
+parseOptions = BangCommand <$> verboseOption <*> outputFile <*> bangOperation
+
+helpString :: String
+helpString = show (parserHelp (ParserPrefs "" False False True 80) parseOptions)
+
+getCommand :: IO BangCommand
+getCommand = execParser (parseOptions `withInfo` "Run a bang language action.")

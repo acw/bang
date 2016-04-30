@@ -1,8 +1,10 @@
 import Syntax.CommandLine
 
 main :: IO ()
-main = getCommand >>= \ mode ->
-  putStrLn (show mode)
+main = getCommand >>= \ cmd ->
+  case cmdCommand cmd of
+    Lex _lexOpts -> putStrLn ("LEX: " ++ show cmd)
+    Help         -> putStrLn helpString
 
 
 {-
