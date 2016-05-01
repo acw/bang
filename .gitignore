@@ -5,7 +5,6 @@
 *.bak
 hsrc/Syntax/Lexer.hs
 hsrc/Syntax/Parser.hs
-bang
 
 .cabal-sandbox/
 dist/

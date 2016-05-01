@@ -1,4 +1,4 @@
-module Syntax.CommandLine(
+module Bang.CommandLine(
          BangCommand(..)
        , BangOperation(..)
        , LexerOptions(..)
@@ -7,8 +7,6 @@ module Syntax.CommandLine(
        )
  where
 
-import Data.Version(showVersion)
-import Paths_bang(version)
 import Options.Applicative
 import Options.Applicative.Help
 
@@ -32,12 +30,14 @@ outputFile = strOption (short 'o' <> long "output-file" <> metavar "FILE"
                       <> value "/dev/stdout" <> showDefault)
 
 data BangOperation = Help
+                   | Version
                    | Lex LexerOptions
  deriving (Show)
 
 bangOperation :: Parser BangOperation
 bangOperation = subparser $
   command "help" (pure Help `withInfo` "Describe common commands.") <>
+  command "version" (pure Version `withInfo` "Display version information.") <>
   command "lex" (parseLex `withInfo` "Lex a file into its component tokens.")
 
 withInfo :: Parser a -> String -> ParserInfo a 

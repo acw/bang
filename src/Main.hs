@@ -1,66 +1,26 @@
-import Syntax.CommandLine
+import           Bang.CommandLine
+import           Bang.Syntax.Lexer
+import           Bang.Syntax.Location
+import           Control.Exception(tryJust)
+import           Control.Monad(guard)
+import qualified Data.Text.Lazy.IO as T
+import           Data.Version(showVersion)
+import           Paths_bang(version)
+import           System.IO.Error(isDoesNotExistError)
 
 main :: IO ()
 main = getCommand >>= \ cmd ->
   case cmdCommand cmd of
-    Lex _lexOpts -> putStrLn ("LEX: " ++ show cmd)
-    Help         -> putStrLn helpString
+    Lex  o  -> runLexer cmd o
+    Help    -> putStrLn helpString
+    Version -> putStrLn ("Bang tool, version " ++ showVersion version)
 
-
-{-
-import Control.Exception
-import Control.Monad
-import qualified Data.ByteString as S
-import System.Environment
-import System.Exit
-import System.IO.Error
-
-import Syntax.AST
-import Syntax.Lexer
-import Syntax.Parser
-import Syntax.ParserCore
-
-main :: IO ()
-main = do
-  args <- getArgs
-  case args of
-    [file]        -> do
-      ast <- loadModule file
-      putStrLn "Successful parse!"
-      putStrLn (show ast)
-    ["-lex",path] -> do
-      mtxt <- tryJust (guard . isDoesNotExistError) $ S.readFile path
-      case mtxt of
-        Left _    -> fail $ "Unable to open file: " ++ path
-        Right txt -> do
-          case runParser path txt pullTokens of
-            Left err -> printError err >> exitWith (ExitFailure 1)
-            Right ress -> do
-              mapM_ putStrLn ress
-              putStrLn "Successful lex."
-    ["-parse",path] -> do
-      ast <- loadModule path
-      putStrLn "Successful parse!"
-      putStrLn (show ast)
-    _ -> fail "Unacceptable arguments."
-
-pullTokens :: Parser [String]
-pullTokens = do
-  tok <- scan
-  case tok of
-    Lexeme pos tok' -> do
-      let res = show pos ++ " " ++ show tok'
-      if tok' == TokEOF
-        then return [res]
-        else return (res :) `ap` pullTokens
-
-loadModule :: FilePath -> IO (Module Position)
-loadModule path = do
-  mtxt <- tryJust (guard . isDoesNotExistError) $ S.readFile path
-  case mtxt of
-    Left _ -> fail $ "Unable to open file: " ++ path
-    Right txt ->
-      case runParser path txt parseModule of
-        Left err  -> printError err >> exitWith (ExitFailure 1)
-        Right ast -> return ast
--}
+runLexer :: BangCommand -> LexerOptions -> IO ()
+runLexer _cmd opts =
+  do let path = lexInputFile opts
+     mtxt <- tryJust (guard . isDoesNotExistError) (T.readFile path)
+     case mtxt of
+       Left _    -> fail ("Unable to opten file: " ++ path)
+       Right txt ->
+         do let tokens = lexer (File path) (Just initialPosition) txt
+            mapM_ (putStrLn . show) tokens
