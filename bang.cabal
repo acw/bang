@@ -39,6 +39,7 @@ executable bang
                        Bang.Syntax.Lexer,
                        Bang.Syntax.Location,
                        Bang.Syntax.Name,
+                       Bang.Syntax.Parser,
                        Bang.Syntax.Token,
                        Paths_bang
   

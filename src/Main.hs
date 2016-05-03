@@ -1,6 +1,7 @@
 import           Bang.CommandLine
 import           Bang.Syntax.Lexer
 import           Bang.Syntax.Location
+import           Bang.Syntax.Parser
 import           Control.Exception(tryJust)
 import           Control.Monad(guard)
 import qualified Data.Text.Lazy.IO as T
@@ -24,3 +25,5 @@ runLexer _cmd opts =
        Right txt ->
          do let tokens = lexer (File path) (Just initialPosition) txt
             mapM_ (putStrLn . show) tokens
+
+
