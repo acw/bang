@@ -1,3 +1,5 @@
+-- -*- mode: haskell -*-
+-- vi: set ft=haskell :
 {
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS -w                 #-}
@@ -43,9 +45,9 @@ $escape_char = [abfnrtv'\"\\]
   $decdigit+"e""-"?$decdigit+                      { emitS FloatTok}
 
 -- Identifier
-  $typestart $identrest*                           { emitS TypeIdent    }
-  $valstart $identrest*                            { emitS ValIdent     }
-  $opident+                                        { emitS OpIdent      }
+  $typestart $identrest*                           { emitS TypeIdent               }
+  $valstart $identrest*                            { emitS ValIdent                }
+  $opident+                                        { emitS (OpIdent (LeftAssoc 9)) }
 
 -- Characters and Strings
   ['].[']                                          { emitS CharTok }
