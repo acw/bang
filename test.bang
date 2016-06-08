@@ -1,0 +1,8 @@
+module Test
+
+primitive type Word = "u64"
+
+/* This is a number! */
+one :: Word
+one = 1
+

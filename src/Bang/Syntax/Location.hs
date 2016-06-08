@@ -9,6 +9,7 @@ module Bang.Syntax.Location(
        , locSource, locStart, locEnd
        , Located(..)
        , locatedAt
+       , unknownLocation
        )
  where
 
@@ -66,3 +67,6 @@ instance Show a => Show (Located a) where
 
 locatedAt :: a -> Location -> Located a
 locatedAt a p = Located p a
+
+unknownLocation :: Location
+unknownLocation = Location Unknown initialPosition initialPosition

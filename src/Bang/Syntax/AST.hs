@@ -3,18 +3,33 @@ module Bang.Syntax.AST
 
 import Data.Text.Lazy(Text)
 import Bang.Syntax.Location
-import Bang.Syntax.Token
 
-data Name = Name Text
+data NameEnvironment = ModuleEnv | TypeEnv | VarEnv
+ deriving (Eq, Ord, Show)
 
-identToName :: Located Token -> Name
-identToName = undefined
+data Name = Name Location NameEnvironment Word Text
+ deriving (Show)
 
 data Module = Module Name [Declaration]
+ deriving (Show)
 
-data Declaration = TypeDeclaration
-                 | ValueDeclaration
+data Declaration = TypeDeclaration  !Name !Type
+                 | ValueDeclaration !Name !Expression
+                 | PrimTypeDecl           !PrimitiveType
+ deriving (Show)
 
-data Expression = Expression
+data PrimitiveType = PrimType Name Text
+ deriving (Show)
 
-data Type = Type
+data Expression = ConstantExp  Location ConstantVal
+                | ReferenceExp Location Name
+ deriving (Show)
+
+data ConstantVal = ConstantInt    Word Text
+                 | ConstantChar        Text
+                 | ConstantString      Text
+                 | ConstantFloat       Text
+ deriving (Show)
+
+data Type = TypeRef Location Name
+ deriving (Show)

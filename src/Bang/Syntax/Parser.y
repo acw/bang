@@ -15,65 +15,71 @@ import           Bang.Syntax.AST
 import           Bang.Syntax.Lexer
 import           Bang.Syntax.Location
 import           Bang.Syntax.Token
+import           Data.Char(digitToInt)
 import           Data.Map.Strict(Map)
 import           Data.Map.Strict as Map
+import           Data.Maybe(catMaybes)
 import           Data.Text.Lazy(Text)
 import qualified Data.Text.Lazy as T
 import           MonadLib
 
+import Debug.Trace
+
 }
 
+%name      top_module
 %tokentype { Located Token }
+%monad     { Parser        }
+%error     { parseError    }
+%lexer     { runNextToken  } { Located _ EOFTok }
 
 %token
- '::'      { Located $$ (OpIdent   _ "::")     }
- '='       { Located $$ (OpIdent   _ "=")      }
- ','       { Located $$ (OpIdent   _ ",")      }
- 'infixl'  { Located $$ (ValIdent    "infixl") }
- 'infixr'  { Located $$ (ValIdent    "infixr") }
- 'infix'   { Located $$ (ValIdent    "infix")  }
- 'module'  { Located $$ (ValIdent    "module") }
- Integer   { Located _  (IntTok    _ _)        }
- OpIdent   { Located _  (OpIdent   _ _)        }
- TypeIdent { Located _  (TypeIdent _)          }
- ValIdent  { Located _  (ValIdent  _)          }
- OPL0 { Located _  (OpIdent (LeftAssoc  0) _)   }
- OPR0 { Located _  (OpIdent (RightAssoc 0) _)   }
- OPN0 { Located _  (OpIdent (NonAssoc   0) _)   }
- OPL1 { Located _  (OpIdent (LeftAssoc  1) _)   }
- OPR1 { Located _  (OpIdent (RightAssoc 1) _)   }
- OPN1 { Located _  (OpIdent (NonAssoc   1) _)   }
- OPL2 { Located _  (OpIdent (LeftAssoc  2) _)   }
- OPR2 { Located _  (OpIdent (RightAssoc 2) _)   }
- OPN2 { Located _  (OpIdent (NonAssoc   2) _)   }
- OPL3 { Located _  (OpIdent (LeftAssoc  3) _)   }
- OPR3 { Located _  (OpIdent (RightAssoc 3) _)   }
- OPN3 { Located _  (OpIdent (NonAssoc   3) _)   }
- OPL4 { Located _  (OpIdent (LeftAssoc  4) _)   }
- OPR4 { Located _  (OpIdent (RightAssoc 4) _)   }
- OPN4 { Located _  (OpIdent (NonAssoc   4) _)   }
- OPL5 { Located _  (OpIdent (LeftAssoc  5) _)   }
- OPR5 { Located _  (OpIdent (RightAssoc 5) _)   }
- OPN5 { Located _  (OpIdent (NonAssoc   5) _)   }
- OPL6 { Located _  (OpIdent (LeftAssoc  6) _)   }
- OPR6 { Located _  (OpIdent (RightAssoc 6) _)   }
- OPN6 { Located _  (OpIdent (NonAssoc   6) _)   }
- OPL7 { Located _  (OpIdent (LeftAssoc  7) _)   }
- OPR7 { Located _  (OpIdent (RightAssoc 7) _)   }
- OPN7 { Located _  (OpIdent (NonAssoc   7) _)   }
- OPL8 { Located _  (OpIdent (LeftAssoc  8) _)   }
- OPR8 { Located _  (OpIdent (RightAssoc 8) _)   }
- OPN8 { Located _  (OpIdent (NonAssoc   8) _)   }
- OPL9 { Located _  (OpIdent (LeftAssoc  9) _)   }
- OPR9 { Located _  (OpIdent (RightAssoc 9) _)   }
- OPN9 { Located _  (OpIdent (NonAssoc   9) _)   }
-
-
-%monad { Parser       }
-%error { parseError   }
-%lexer { runNextToken } { Located initialPosition EOFTok }
-
-%name top_module
+ '::'        { Located $$ (OpIdent   _ "::")         }
+ '='         { Located $$ (OpIdent   _ "=")          }
+ ','         { Located $$ (OpIdent   _ ",")          }
+ 'infixl'    { Located $$ (ValIdent    "infixl")     }
+ 'infixr'    { Located $$ (ValIdent    "infixr")     }
+ 'infix'     { Located $$ (ValIdent    "infix")      }
+ 'module'    { Located $$ (ValIdent    "module")     }
+ 'primitive' { Located $$ (ValIdent    "primitive")  }
+ 'type'      { Located $$ (ValIdent    "type")       }
+ Integer     { Located _  (IntTok    _ _)            }
+ Float       { Located _  (FloatTok  _)              }
+ Char        { Located _  (CharTok   _)              }
+ String      { Located _  (StringTok _)              }
+ OpIdent     { Located _  (OpIdent   _ _)            }
+ TypeIdent   { Located _  (TypeIdent _)              }
+ ValIdent    { Located _  (ValIdent  _)              }
+ OPL0        { Located _  (OpIdent (LeftAssoc  0) _) }
+ OPR0        { Located _  (OpIdent (RightAssoc 0) _) }
+ OPN0        { Located _  (OpIdent (NonAssoc   0) _) }
+ OPL1        { Located _  (OpIdent (LeftAssoc  1) _) }
+ OPR1        { Located _  (OpIdent (RightAssoc 1) _) }
+ OPN1        { Located _  (OpIdent (NonAssoc   1) _) }
+ OPL2        { Located _  (OpIdent (LeftAssoc  2) _) }
+ OPR2        { Located _  (OpIdent (RightAssoc 2) _) }
+ OPN2        { Located _  (OpIdent (NonAssoc   2) _) }
+ OPL3        { Located _  (OpIdent (LeftAssoc  3) _) }
+ OPR3        { Located _  (OpIdent (RightAssoc 3) _) }
+ OPN3        { Located _  (OpIdent (NonAssoc   3) _) }
+ OPL4        { Located _  (OpIdent (LeftAssoc  4) _) }
+ OPR4        { Located _  (OpIdent (RightAssoc 4) _) }
+ OPN4        { Located _  (OpIdent (NonAssoc   4) _) }
+ OPL5        { Located _  (OpIdent (LeftAssoc  5) _) }
+ OPR5        { Located _  (OpIdent (RightAssoc 5) _) }
+ OPN5        { Located _  (OpIdent (NonAssoc   5) _) }
+ OPL6        { Located _  (OpIdent (LeftAssoc  6) _) }
+ OPR6        { Located _  (OpIdent (RightAssoc 6) _) }
+ OPN6        { Located _  (OpIdent (NonAssoc   6) _) }
+ OPL7        { Located _  (OpIdent (LeftAssoc  7) _) }
+ OPR7        { Located _  (OpIdent (RightAssoc 7) _) }
+ OPN7        { Located _  (OpIdent (NonAssoc   7) _) }
+ OPL8        { Located _  (OpIdent (LeftAssoc  8) _) }
+ OPR8        { Located _  (OpIdent (RightAssoc 8) _) }
+ OPN8        { Located _  (OpIdent (NonAssoc   8) _) }
+ OPL9        { Located _  (OpIdent (LeftAssoc  9) _) }
+ OPR9        { Located _  (OpIdent (RightAssoc 9) _) }
+ OPN9        { Located _  (OpIdent (NonAssoc   9) _) }
 
 %right    OPL0
 %left     OPR0
@@ -110,25 +116,65 @@ import           MonadLib
 
 top_module :: { Module }
   : 'module' TypeIdent listopt(declaration)
-    { Module (identToName $2) $3 }
+    {%
+       do let Located src (TypeIdent rawName) = $2
+          name <- registerName False src ModuleEnv rawName
+          return (Module name $3) }
 
 declaration :: { Maybe Declaration }
   : ValIdent '::' Type
-    { Just TypeDeclaration }
+    {%
+       do let Located src (ValIdent rawName) = $1
+          name <- registerName True src VarEnv rawName
+          return (Just (TypeDeclaration name $3)) }
   | ValIdent '=' Expression
-    { Just ValueDeclaration }
+    {%
+       do let Located src (ValIdent rawName) = $1
+          name <- registerName True src VarEnv rawName
+          return (Just (ValueDeclaration name $3)) }
   | 'infixl' Integer sep(',',OpIdent)
     {% addFixities $1 LeftAssoc  $2 $3 >> return Nothing }
   | 'infixr' Integer sep(',',OpIdent)
     {% addFixities $1 RightAssoc $2 $3 >> return Nothing }
   | 'infix'  Integer sep(',',OpIdent)
     {% addFixities $1 NonAssoc   $2 $3 >> return Nothing }
+  | 'primitive' 'type' TypeIdent '=' String
+    {%
+       do let Located src (TypeIdent rawName) = $3
+              Located _   (StringTok rawText) = $5
+          name <- registerName False src TypeEnv rawName
+          return (Just (PrimTypeDecl (PrimType name rawText))) }
 
 Type :: { Type }
-  : {- empty -} { Type }
+  : TypeIdent   {%
+       do let Located src (TypeIdent rawName) = $1
+          name <- lookupName src TypeEnv rawName
+          return (TypeRef src name) }
 
 Expression :: { Expression }
-  : {- empty -} { Expression }
+  : BaseExpression { $1 }
+
+BaseExpression :: { Expression }
+  : OpIdent  {%
+                do let Located src (OpIdent _ rawName) = $1
+                   name <- lookupName src VarEnv rawName
+                   return (ReferenceExp src name) }
+  | ValIdent {%
+                do let Located src (ValIdent rawName) = $1
+                   name <- lookupName src VarEnv rawName
+                   return (ReferenceExp src (trace "NAME" name)) }
+  | Integer  {%
+                do let Located src (IntTok base val) = $1
+                   return (ConstantExp src (ConstantInt base val)) }
+  | String   {%
+                do let Located src (StringTok val) = $1
+                   return (ConstantExp src (ConstantString val)) }
+  | Float    {%
+                do let Located src (FloatTok val) = $1
+                   return (ConstantExp src (ConstantFloat val)) }
+  | Char     {%
+                do let Located src (CharTok val) = $1
+                   return (ConstantExp src (ConstantChar val)) }
 
 -- -----------------------------------------------------------------------------
 
@@ -159,11 +205,12 @@ list_body(p)
   | list_body(p) p { $2 : $1 }
 
 listopt(p)
-  : {- empty -}    { []          }
-  | listopt(p) p   { case $2 of
-                       Nothing -> $1
-                       Just x  -> $1 ++ [x]
-                   }
+  : p p p { catMaybes [$1, $2, $3] }
+--  : {- empty -}    { [] }
+--  | listopt(p) p   { case $2 of
+--                       Nothing -> $1
+--                       Just x  -> $1 ++ [x]
+--                   }
 
 {
 
@@ -172,9 +219,11 @@ newtype Parser a = Parser {
         }
  deriving (Functor, Applicative, Monad)
 
-data ParseError = LexError      Location Text
-                | ParseError    Location Token
-                | SemanticError Location Text
+data ParseError = LexError          Location Text
+                | ParseError        Location Token
+                | RedefinitionError Location Location Text
+                | InternalError     Location Text
+                | UnboundVariable   Location Text
                 | UnexpectedEOF
  deriving (Show)
 
@@ -184,9 +233,20 @@ showError (ParseError    l t) = show l ++ ": parse error around " ++ showToken t
 showError  UnexpectedEOF      =           "Unexpected end of file"
 
 data ParserState = ParserState {
-       psPrecTable   :: Map Text Word
-     , psTokenStream :: [Located Token]
+       psPrecTable    :: Map Text Fixity
+     , psTokenStream  :: [Located Token]
+     , psNameDatabase :: Map (NameEnvironment, Text) Name
+     , psNextIdent    :: Word
      }
+
+initialState :: [Located Token] -> ParserState
+initialState tokenStream = ParserState {
+    psPrecTable    = Map.empty
+  , psTokenStream  = tokenStream
+  , psNameDatabase = Map.empty
+  , psNextIdent    = 1
+  }
+
 
 instance StateM Parser ParserState where
   get = Parser   get
@@ -201,13 +261,82 @@ instance RunExceptionM Parser ParseError where
 addFixities :: Location ->
                (Word -> Fixity) -> Located Token -> [Located Token] ->
                Parser ()
-addFixities = undefined
+addFixities src fixityBuilder lval names =
+  do value <- processInteger lval
+     let fixity = fixityBuilder value
+     forM_ names $ \ tok ->
+       do state <- get
+          name <- forceNameDefined VarEnv src tok state
+          let table' = Map.insert name fixity (psPrecTable state)
+          set state{ psPrecTable = table' }
+ where
+  processInteger x =
+    case x of
+      Located _ (IntTok base text) ->
+        return (makeNumeric base text 0)
+      _ ->
+        raise (InternalError src "Non-number in fixity?")
+
+  --
+  makeNumeric base text acc =
+    case T.uncons text of
+      Nothing        -> acc
+      Just (x, rest) ->
+        let acc' = (acc * base) + charValue x
+        in makeNumeric base rest acc'
+  --
+  charValue = fromIntegral . digitToInt
+  --
+  tokenName t =
+    case t of
+      Located _ (TypeIdent   x) -> x
+      Located _ (ValIdent    x) -> x
+      Located _ (OpIdent   _ x) -> x
+      _                       ->
+        error "Internal error (tokenName in Parser.y)"
+  --
+  forceNameDefined env src token state =
+    do let name = tokenName token
+       case Map.lookup (env, name) (psNameDatabase state) of
+         Just _  -> return name
+         Nothing -> raise (UnboundVariable src name)
+
+registerName :: Bool -> Location -> NameEnvironment -> Text -> Parser Name
+registerName redefOk loc env name =
+  do state <- get
+     let key = (env, name)
+         db  = psNameDatabase state
+     case Map.lookup key db of
+       Nothing ->
+         do let res    = Name loc env (psNextIdent state) name
+                state' = state {
+                           psNameDatabase = Map.insert key res db
+                         , psNextIdent    = 1 + psNextIdent state
+                         }
+            set state'
+            return res
+       Just res | redefOk ->
+         return res
+       Just (Name origLoc _ _ _) ->
+         raise (RedefinitionError loc origLoc name)
+
+lookupName :: Location -> NameEnvironment -> Text -> Parser Name
+lookupName loc env name =
+  do state <- get
+     case Map.lookup (env, name) (psNameDatabase state) of
+       Nothing ->
+         raise (UnboundVariable loc name)
+       Just name ->
+         return name
 
 runNextToken :: (Located Token -> Parser a) -> Parser a
 runNextToken action =
   do state <- get
      case psTokenStream state of
-       []         -> raise UnexpectedEOF
+       [] ->
+         raise (InternalError unknownLocation "End of stream, but no EOF?")
+       (eof@(Located _ EOFTok) : _)    ->
+         action eof -- leave this on at the end of the stream
        (x : rest) ->
          do set (state{ psTokenStream = rest })
             action x
@@ -218,13 +347,13 @@ lexWithLayout src pos txt = lexer src (Just pos) txt
 parseModule :: Origin -> Text -> Either ParseError Module
 parseModule src txt =
   let parserM   = unParser top_module
-      excM      = runStateT initialState (parserM :: StateT ParserState (ExceptionT ParseError Id) Module)
+      excM      = runStateT (initialState tokenStream)
+                    (parserM :: StateT ParserState (ExceptionT ParseError Id) Module)
       idM       = runExceptionT (excM :: ExceptionT ParseError Id (Module, ParserState))
       resWState = runId idM
   in fmap fst resWState
  where
   tokenStream  = lexWithLayout src initialPosition txt
-  initialState = ParserState Map.empty tokenStream
 
 parseError :: Located Token -> Parser a
 parseError t =

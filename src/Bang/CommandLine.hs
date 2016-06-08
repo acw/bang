@@ -2,6 +2,7 @@ module Bang.CommandLine(
          BangCommand(..)
        , BangOperation(..)
        , LexerOptions(..)
+       , ParserOptions(..)
        , getCommand
        , helpString
        )
@@ -32,13 +33,15 @@ outputFile = strOption (short 'o' <> long "output-file" <> metavar "FILE"
 data BangOperation = Help
                    | Version
                    | Lex LexerOptions
+                   | Parse ParserOptions
  deriving (Show)
 
 bangOperation :: Parser BangOperation
 bangOperation = subparser $
   command "help" (pure Help `withInfo` "Describe common commands.") <>
   command "version" (pure Version `withInfo` "Display version information.") <>
-  command "lex" (parseLex `withInfo` "Lex a file into its component tokens.")
+  command "lex" (parseLex `withInfo` "Lex a file into its component tokens.") <>
+  command "parse" (parseParse `withInfo` "Parse a file into its AST.")
 
 withInfo :: Parser a -> String -> ParserInfo a 
 withInfo opts desc = info (helper <*> opts) (progDesc desc)
@@ -53,6 +56,17 @@ parseLex = Lex <$> parseLexOptions
 
 parseLexOptions :: Parser LexerOptions
 parseLexOptions = LexerOptions <$> argument str (metavar "FILE")
+
+data ParserOptions = ParserOptions {
+       parseInputFile :: FilePath
+     }
+ deriving (Show)
+
+parseParse :: Parser BangOperation
+parseParse = Parse <$> parseParseOptions
+
+parseParseOptions :: Parser ParserOptions
+parseParseOptions = ParserOptions <$> argument str (metavar "FILE")
 
 parseOptions :: Parser BangCommand
 parseOptions = BangCommand <$> verboseOption <*> outputFile <*> bangOperation

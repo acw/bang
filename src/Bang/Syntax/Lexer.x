@@ -10,6 +10,7 @@ import           Bang.Syntax.Location
 import           Bang.Syntax.Name
 import           Bang.Syntax.Token
 import           Data.Char(isSpace, isAscii, ord)
+import           Data.Int(Int64)
 import           Data.Maybe(fromMaybe)
 import           Data.Text.Lazy(Text)
 import qualified Data.Text.Lazy as T
@@ -34,13 +35,13 @@ $escape_char = [abfnrtv'\"\\]
 
 -- Whitespace
   $white+                                          ;
-  "/*".*"*/"                                       ;
+  "/*"[.\n]*"*/"                                       ;
 
 -- Numbers
-  $decdigit+                                       { emitS (IntTok 10)  }
-  "0x"$hexdigit+                                   { emitS (IntTok 16) }
-  "0o"$octdigit+                                   { emitS (IntTok 8)  }
-  "0b"$bindigit+                                   { emitS (IntTok 2)  }
+  $decdigit+                                       { emitI 0 (IntTok 10)  }
+  "0x"$hexdigit+                                   { emitI 2 (IntTok 16) }
+  "0o"$octdigit+                                   { emitI 2 (IntTok 8)  }
+  "0b"$bindigit+                                   { emitI 2 (IntTok 2)  }
   $decdigit+"."$decdigit+ ("e""-"?$decdigit+)?     { emitS FloatTok}
   $decdigit+"e""-"?$decdigit+                      { emitS FloatTok}
 
@@ -74,7 +75,9 @@ lexer src mbPos txt = go (AlexInput startPos txt)
   startPos = fromMaybe initialPosition mbPos
   go input =
     case alexScan input 0 of
-       AlexEOF                  -> []
+       AlexEOF                  -> let AlexInput pos _ = input
+                                       loc = Location src pos pos
+                                   in [EOFTok `locatedAt` loc]
        AlexError input'         -> let AlexInput pos text = input'
                                        (as, bs) = T.break isSpace text
                                        pos' = advanceWith' pos as
@@ -105,5 +108,13 @@ emitS mk src len (AlexInput pos t) = token `locatedAt` loc
   txt   = T.take (fromIntegral len) t
   token = mk txt
   loc   = Location src pos (pos `advanceWith'` txt)
+
+emitI :: Int64 -> (Text -> Token) -> AlexAction
+emitI dropCount mk src len (AlexInput pos t) = token `locatedAt` loc
+ where
+  baseText = T.take (fromIntegral len) t
+  txt      = T.drop dropCount baseText
+  token    = mk txt
+  loc      = Location src pos (pos `advanceWith'` baseText)
 
 }
