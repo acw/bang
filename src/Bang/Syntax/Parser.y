@@ -143,7 +143,7 @@ declaration :: { Maybe Declaration }
        do let Located src (TypeIdent rawName) = $3
               Located _   (StringTok rawText) = $5
           name <- registerName False src TypeEnv rawName
-          return (Just (PrimTypeDecl (PrimType name rawText))) }
+          return (Just (PrimTypeDeclaration name rawText)) }
 
 Type :: { Type }
   : TypeIdent   {%
