@@ -1,9 +1,8 @@
 module Bang.Syntax.AST
  where
 
-import Data.Text.Lazy(Text, unpack)
-import Bang.Syntax.Location
-import Text.PrettyPrint.Annotated
+import Data.Text.Lazy(Text)
+import Bang.Syntax.Location(Location)
 
 data NameEnvironment = ModuleEnv | TypeEnv | VarEnv
  deriving (Eq, Ord, Show)
@@ -11,42 +10,22 @@ data NameEnvironment = ModuleEnv | TypeEnv | VarEnv
 data Name = Name Location NameEnvironment Word Text
  deriving (Show)
 
-ppName :: Name -> Doc a
-ppName (Name _ _ _ t) = text' t
+instance Eq Name where
+  (Name _ _ x _) == (Name _ _ y _) = x == y
+  (Name _ _ x _) /= (Name _ _ y _) = x /= y
 
 data Module = Module Name [Declaration]
  deriving (Show)
-
-ppModule :: Module -> Doc a
-ppModule (Module name decls) =
-  vcat ([text "module" <> space <> ppName name, text ""] ++
-        map ppDeclaration decls)
 
 data Declaration = TypeDeclaration     Name Type
                  | ValueDeclaration    Name Expression
                  | PrimTypeDeclaration Name Text
  deriving (Show)
 
-ppDeclaration :: Declaration -> Doc a
-ppDeclaration d =
-  case d of
-    TypeDeclaration n t ->
-      ppName n <> space <> text "::" <> space <> ppType t
-    ValueDeclaration n e ->
-      ppName n <> space <> text "=" <> space <> ppExpression e
-    PrimTypeDeclaration n t ->
-      text "primitive" <> space <> text "type" <> space <>
-      ppName n <> space <> text "=" <> space <> text' t
-
 data Expression = ConstantExp  Location ConstantValue
                 | ReferenceExp Location Name
+                | LambdaExp    Location [Name] Expression
  deriving (Show)
-
-ppExpression :: Expression -> Doc a
-ppExpression e =
-  case e of
-    ConstantExp  _ v -> ppConstantValue v
-    ReferenceExp _ n -> ppName n
 
 data ConstantValue = ConstantInt    Word Text
                    | ConstantChar        Text
@@ -54,24 +33,22 @@ data ConstantValue = ConstantInt    Word Text
                    | ConstantFloat       Text
  deriving (Show)
 
-ppConstantValue :: ConstantValue -> Doc a
-ppConstantValue cv =
-  case cv of
-    ConstantInt    2  t -> text "0b" <> text' t
-    ConstantInt    8  t -> text "0o" <> text' t
-    ConstantInt    10 t ->              text' t
-    ConstantInt    16 t -> text "0x" <> text' t
-    ConstantChar      c -> text' c
-    ConstantString    s -> text' s
-    ConstantFloat     f -> text' f
-
-data Type = TypeRef Location Name
+data Type = TypeUnit   Location Kind
+          | TypePrim   Location Kind Text
+          | TypeRef    Location Kind Name
+          | TypeLambda Location Kind Type   Type
+          | TypeApp    Location Kind Type   Type
+          | TypeForAll               [Name] Type
  deriving (Show)
 
-ppType :: Type -> Doc a
-ppType t =
-  case t of
-    TypeRef _ n -> ppName n
+kind :: Type -> Kind
+kind (TypeUnit   _ k)     = k
+kind (TypePrim   _ k _)   = k
+kind (TypeRef    _ k _)   = k
+kind (TypeLambda _ k _ _) = k
+kind (TypeApp    _ k _ _) = k
+kind (TypeForAll     _ t) = kind t
 
-text' :: Text -> Doc a
-text' = text . unpack
+data Kind = Star
+          | KindArrow Kind Kind
+  deriving (Show)

@@ -16,8 +16,9 @@ import           Bang.Syntax.Lexer
 import           Bang.Syntax.Location
 import           Bang.Syntax.Token
 import           Data.Char(digitToInt)
+import           Data.List(union)
 import           Data.Map.Strict(Map)
-import           Data.Map.Strict as Map
+import qualified Data.Map.Strict as Map
 import           Data.Maybe(catMaybes)
 import           Data.Text.Lazy(Text)
 import qualified Data.Text.Lazy as T
@@ -37,6 +38,7 @@ import Debug.Trace
  '::'        { Located $$ (OpIdent   _ "::")         }
  '='         { Located $$ (OpIdent   _ "=")          }
  ','         { Located $$ (OpIdent   _ ",")          }
+ '->'        { Located $$ (OpIdent   _ "->")         }
  'infixl'    { Located $$ (ValIdent    "infixl")     }
  'infixr'    { Located $$ (ValIdent    "infixr")     }
  'infix'     { Located $$ (ValIdent    "infix")      }
@@ -115,41 +117,95 @@ import Debug.Trace
 %%
 
 top_module :: { Module }
-  : 'module' TypeIdent listopt(declaration)
+  : 'module' TypeIdent listopt(Declaration)
     {%
        do let Located src (TypeIdent rawName) = $2
           name <- registerName False src ModuleEnv rawName
           return (Module name $3) }
 
-declaration :: { Maybe Declaration }
+Declaration :: { Maybe Declaration }
+  : ValueDeclaration  { Just $1 }
+  | FixityDeclaration { Nothing }
+  | TypeDeclaration   { Just $1 }
+
+ValueDeclaration :: { Declaration }
+  : ValueDeclLHS Expression
+    {%
+        do let (builder, argNames) = $1
+           unregisterNames VarEnv argNames
+           return (builder $2)
+    }
+
+ValueDeclLHS :: { (Expression -> Declaration, [Name]) }
+ : list1(ValIdent) '='
+    {%
+       case $1 of
+         [] ->
+            raise (InternalError $2 "ValDeclLHS")
+         [Located src (ValIdent rawName)] ->
+           do name <- registerName True src VarEnv rawName
+              return (ValueDeclaration name, [name])
+         ((Located src (ValIdent rawName)) : args) ->
+           do name <- registerName True src VarEnv rawName
+              argNames <- forM args $ \ (Located asrc (ValIdent argName)) ->
+                            registerName True asrc VarEnv argName
+              let builder = ValueDeclaration name . LambdaExp $2 argNames
+              return (builder, argNames)
+    }
+
+FixityDeclaration :: { () }
+  : 'infixl' Integer sep(',',OpIdent)
+    {% addFixities $1 LeftAssoc  $2 $3 }
+  | 'infixr' Integer sep(',',OpIdent)
+    {% addFixities $1 RightAssoc $2 $3 }
+  | 'infix'  Integer sep(',',OpIdent)
+    {% addFixities $1 NonAssoc   $2 $3 }
+
+TypeDeclaration :: { Declaration }
   : ValIdent '::' Type
     {%
        do let Located src (ValIdent rawName) = $1
           name <- registerName True src VarEnv rawName
-          return (Just (TypeDeclaration name $3)) }
-  | ValIdent '=' Expression
-    {%
-       do let Located src (ValIdent rawName) = $1
-          name <- registerName True src VarEnv rawName
-          return (Just (ValueDeclaration name $3)) }
-  | 'infixl' Integer sep(',',OpIdent)
-    {% addFixities $1 LeftAssoc  $2 $3 >> return Nothing }
-  | 'infixr' Integer sep(',',OpIdent)
-    {% addFixities $1 RightAssoc $2 $3 >> return Nothing }
-  | 'infix'  Integer sep(',',OpIdent)
-    {% addFixities $1 NonAssoc   $2 $3 >> return Nothing }
+          return (TypeDeclaration name $3) }
   | 'primitive' 'type' TypeIdent '=' String
     {%
        do let Located src (TypeIdent rawName) = $3
               Located _   (StringTok rawText) = $5
           name <- registerName False src TypeEnv rawName
-          return (Just (PrimTypeDeclaration name rawText)) }
+          return (PrimTypeDeclaration name rawText) }
+
+-- -----------------------------------------------------------------------------
 
 Type :: { Type }
+  : RawType {%
+      do let (result, names) = $1
+         case names of
+           [] -> return result
+           xs ->
+             do unregisterNames TypeEnv xs
+                return (TypeForAll xs result)
+      }
+
+RawType :: { (Type, [Name]) }
+  : RawType '->' BaseType {%
+      do let (p1, names1) = $1
+             (p2, names2) = $3
+         return (TypeLambda $2 (Star `KindArrow` Star) p1 p2, union names1 names2)
+     }
+  | BaseType           { $1 }
+
+BaseType :: { (Type, [Name]) }
   : TypeIdent   {%
        do let Located src (TypeIdent rawName) = $1
           name <- lookupName src TypeEnv rawName
-          return (TypeRef src name) }
+          return (TypeRef src Star name, []) }
+  | ValIdent    {%
+       do let Located src (ValIdent rawName) = $1
+          name <- registerName True src TypeEnv rawName
+          return (TypeRef src Star name, [name])
+     }
+
+-- -----------------------------------------------------------------------------
 
 Expression :: { Expression }
   : BaseExpression { $1 }
@@ -162,7 +218,7 @@ BaseExpression :: { Expression }
   | ValIdent {%
                 do let Located src (ValIdent rawName) = $1
                    name <- lookupName src VarEnv rawName
-                   return (ReferenceExp src (trace "NAME" name)) }
+                   return (ReferenceExp src name) }
   | Integer  {%
                 do let Located src (IntTok base val) = $1
                    return (ConstantExp src (ConstantInt base val)) }
@@ -205,12 +261,11 @@ list_body(p)
   | list_body(p) p { $2 : $1 }
 
 listopt(p)
-  : p p p { catMaybes [$1, $2, $3] }
---  : {- empty -}    { [] }
---  | listopt(p) p   { case $2 of
---                       Nothing -> $1
---                       Just x  -> $1 ++ [x]
---                   }
+  : {- empty -}    { [] }
+  | listopt(p) p   { case $2 of
+                       Nothing -> $1
+                       Just x  -> $1 ++ [x]
+                   }
 
 {
 
@@ -319,6 +374,13 @@ registerName redefOk loc env name =
          return res
        Just (Name origLoc _ _ _) ->
          raise (RedefinitionError loc origLoc name)
+
+unregisterNames :: NameEnvironment -> [Name] -> Parser ()
+unregisterNames env names =
+  do state <- get
+     let db  = psNameDatabase state
+         db' = foldr (\ (Name _ _ _ n) m -> Map.delete (env, n) m) db names
+     set state{ psNameDatabase = db' }
 
 lookupName :: Location -> NameEnvironment -> Text -> Parser Name
 lookupName loc env name =

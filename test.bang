@@ -6,3 +6,5 @@ primitive type Word = "u64"
 one :: Word
 one = 1
 
+id :: a -> a
+id x = x
