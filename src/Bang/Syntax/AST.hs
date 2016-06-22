@@ -14,6 +14,17 @@ instance Eq Name where
   (Name _ _ x _) == (Name _ _ y _) = x == y
   (Name _ _ x _) /= (Name _ _ y _) = x /= y
 
+instance Ord Name where
+  compare (Name _ _ x _) (Name _ _ y _) = compare x y
+  --
+  max     n1@(Name _ _ x _) n2@(Name _ _ y _) = if x > y then n1 else n2
+  min     n1@(Name _ _ x _) n2@(Name _ _ y _) = if x > y then n2 else n1
+  --
+  (Name _ _ x _) <  (Name _ _ y _) = x <  y
+  (Name _ _ x _) <= (Name _ _ y _) = x <= y
+  (Name _ _ x _) >= (Name _ _ y _) = x >= y
+  (Name _ _ x _) >  (Name _ _ y _) = x >  y
+
 data Module = Module Name [Declaration]
  deriving (Show)
 
@@ -41,6 +52,14 @@ data Type = TypeUnit   Location Kind
           | TypeForAll               [Name] Type
  deriving (Show)
 
+instance Eq Type where
+  (TypeUnit _ _)         == (TypeUnit _ _)         = True
+  (TypePrim _ _ a)       == (TypePrim _ _ b)       = a == b
+  (TypeRef  _ _ n)       == (TypeRef  _ _ m)       = n == m
+  (TypeLambda _ _ at et) == (TypeLambda _ _ bt ft) = (at == bt) && (et == ft)
+  (TypeApp    _ _ at bt) == (TypeApp    _ _ ct dt) = (at == ct) && (bt == dt)
+  (TypeForAll     ns t)  == (TypeForAll     ms u)  = (ns == ms) && (t == u)
+
 kind :: Type -> Kind
 kind (TypeUnit   _ k)     = k
 kind (TypePrim   _ k _)   = k
@@ -51,4 +70,4 @@ kind (TypeForAll     _ t) = kind t
 
 data Kind = Star
           | KindArrow Kind Kind
-  deriving (Show)
+  deriving (Show, Eq)

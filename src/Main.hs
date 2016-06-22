@@ -47,6 +47,6 @@ withParsed action path body =
 
 withInferred :: (Module -> IO ()) -> Module -> IO ()
 withInferred action mdl =
-  case typeInfer mdl of
-    Left err   -> exit err
+  case typeInfer 0 mdl of
+    Left err   -> exit (show err)
     Right mdl' -> action mdl'
