@@ -1,5 +1,6 @@
 import           Bang.CommandLine
 import           Bang.Error(exit)
+import           Bang.Monad
 import           Bang.Syntax.AST(Module)
 import           Bang.Syntax.Lexer(lexer)
 import           Bang.Syntax.Location

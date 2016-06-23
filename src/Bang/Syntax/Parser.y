@@ -302,7 +302,6 @@ initialState tokenStream = ParserState {
   , psNextIdent    = 1
   }
 
-
 instance StateM Parser ParserState where
   get = Parser   get
   set = Parser . set

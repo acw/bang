@@ -180,7 +180,12 @@ inferConstant c =
                     | ConstantFloat    _ <- c = IsIn "FloatLike" v
      return ([constraint], v)
 
-inferExpression :: ClassEnvironment -> [Assumptions] ->
+data ClassEnvironment = [Predicate] :=> Type
+
+freshInst :: Scheme -> Infer ClassEnvironment
+freshInst = undefined
+
+inferExpression :: ClassEnvironment -> [Assumption] ->
                    Expression ->
                    Infer ([Predicate], Type)
 inferExpression classEnv assumpts expr =

@@ -32,11 +32,13 @@ executable bang
   other-extensions:    CPP,
                        DeriveDataTypeable,
                        DeriveFunctor,
+                       FlexibleInstances,
                        GeneralizedNewtypeDeriving,
                        MagicHash,
                        MultiParamTypeClasses,
                        OverloadedStrings,
-                       TemplateHaskell
+                       TemplateHaskell,
+                       UndecidableInstances
   other-modules:
                        Bang.CommandLine,
                        Bang.Syntax.Lexer,
