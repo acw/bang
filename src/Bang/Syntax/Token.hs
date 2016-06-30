@@ -1,12 +1,14 @@
 module Bang.Syntax.Token(
          Token(..)
        , Fixity(..)
-       , showToken
+       , ppToken
        )
  where
 
-import           Data.Text.Lazy(Text)
-import qualified Data.Text.Lazy as T
+import Bang.Utils.Pretty(BangDoc, text')
+import Data.Monoid((<>))
+import Data.Text.Lazy(Text)
+import Text.PrettyPrint.Annotated(quotes, doubleQuotes, text, parens)
 
 data Token = CharTok   Text
            | FloatTok  Text
@@ -25,14 +27,14 @@ data Fixity = LeftAssoc  Word
             | NonAssoc   Word
  deriving (Show)
 
-showToken :: Token -> String
-showToken (CharTok   t)   = "'" ++ T.unpack t ++ "'"
-showToken (FloatTok  t)   = T.unpack t
-showToken (IntTok    _ t) = T.unpack t
-showToken (OpIdent   _ t) = T.unpack t
-showToken (Special   t)   = T.unpack t
-showToken (StringTok t)   = "\"" ++ T.unpack t ++ "\""
-showToken (TypeIdent t)   = T.unpack t
-showToken (ValIdent  t)   = T.unpack t
-showToken (ErrorTok  t)   = "ERROR(" ++ T.unpack t ++ ")"
-showToken EOFTok          = "EOF"
+ppToken :: Token -> BangDoc
+ppToken (CharTok   t)   = quotes (text' t)
+ppToken (FloatTok  t)   = text' t
+ppToken (IntTok    _ t) = text' t
+ppToken (OpIdent   _ t) = text' t
+ppToken (Special   t)   = text' t
+ppToken (StringTok t)   = doubleQuotes (text' t)
+ppToken (TypeIdent t)   = text' t
+ppToken (ValIdent  t)   = text' t
+ppToken (ErrorTok  t)   = text "ERROR" <> parens (text' t)
+ppToken EOFTok          = text "<EOF>"

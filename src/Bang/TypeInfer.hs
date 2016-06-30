@@ -3,21 +3,19 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE TemplateHaskell            #-}
-module Bang.TypeInfer(typeInfer)
+module Bang.TypeInfer
  where
 
+import           Bang.Monad(Compiler, BangError(..), err,
+                            getPassState, setPassState)
 import           Bang.Syntax.AST
 import           Bang.Syntax.Location(unknownLocation)
 import           Control.Lens(view, over)
 import           Control.Lens.TH(makeLenses)
-import           Data.List(union, nub, concat, intersect)
+import           Data.List(union, nub, concat)
 import           Data.Map.Strict(Map)
 import qualified Data.Map.Strict as Map
 import           Data.Text.Lazy(pack)
-import           MonadLib(StateT, ExceptionT, Id,
-                          StateM(..), ExceptionM(..), RunExceptionM(..),
-                          runStateT, runExceptionT, runId,
-                          get, raise)
 
 -- -----------------------------------------------------------------------------
 
@@ -36,7 +34,7 @@ nullSubstitution = Map.empty
 infixr 4 @@
 (@@) :: Substitution -> Substitution -> Substitution
 (@@) s1 s2 =
-  let s2' = Map.map (\ t -> apply s1 t) s1 
+  let s2' = Map.map (\ t -> apply s1 t) s2
   in Map.union s2' s1
 
 -- -----------------------------------------------------------------------------
@@ -49,6 +47,9 @@ data InferenceError = UnificationError  Type  Type
                     | MergeFailure      Substitution Substitution
  deriving (Show)
 
+instance BangError InferenceError where
+  ppError = undefined
+
 data InferenceState = InferenceState {
        _istCurrentSubstitution :: Substitution
      , _istNextIdentifier      :: Word
@@ -56,26 +57,13 @@ data InferenceState = InferenceState {
 
 makeLenses ''InferenceState
 
-newtype Infer a = Infer {
-          unInfer :: StateT InferenceState (ExceptionT InferenceError Id) a
-        }
- deriving (Functor, Applicative, Monad)
-
-instance StateM Infer InferenceState where
-  get = Infer   get
-  set = Infer . set
-
-instance ExceptionM Infer InferenceError where
-  raise = Infer . raise
-
-instance RunExceptionM Infer InferenceError where
-  try m = Infer (try (unInfer m))
+type Infer a = Compiler InferenceState a
 
 -- -----------------------------------------------------------------------------
 
 merge :: Substitution -> Substitution -> Infer Substitution
 merge s1 s2 | agree     = return (Map.union s1 s2)
-            | otherwise = raise (MergeFailure s1 s2)
+            | otherwise = err (MergeFailure s1 s2)
  where
    names = Map.keys (Map.intersection s1 s2)
    agree = all (\ v ->
@@ -93,15 +81,15 @@ mostGeneralUnifier t1 t2 =
     (u@(TypeRef _ _ _), t) -> varBind u t
     (t, u@(TypeRef _ _ _)) -> varBind u t
     (TypePrim _ _ tc1, TypePrim _ _ tc2) | tc1 == tc2 -> return nullSubstitution
-    (t1, t2) -> raise (UnificationError t1 t2)
+    _ -> err (UnificationError t1 t2)
 
 varBind :: Type -> Type -> Infer Substitution
-varBind (TypeRef _ k u) t
-  | TypeRef _ _ u' <- t, u' == u = return nullSubstitution
-  | u `elem` tv t                = raise (OccursCheckFails u t)
-  | k /= kind t                  = raise (KindCheckFails u t)
-  | otherwise                    = return (u ⟼  t)
-
+varBind = undefined
+--  | TypeRef _ _ u' <- t, u' == u = return nullSubstitution
+--  | u `elem` tv t                = err (OccursCheckFails u t)
+--  | k /= kind t                  = err (KindCheckFails u t)
+--  | otherwise                    = return (u ⟼  t)
+--
 match :: Type -> Type -> Infer Substitution
 match t1 t2 =
   case (t1, t2) of
@@ -111,22 +99,22 @@ match t1 t2 =
          merge sl sr
     (TypeRef _ k u, t) | k == kind t -> return (u ⟼  t)
     (TypePrim _ _ tc1, TypePrim _ _ tc2) | tc1 == tc2 -> return nullSubstitution
-    (t1, t2) -> raise (MatchFailure t1 t2)
+    _ -> err (MatchFailure t1 t2)
 
 data Scheme = Forall [Kind] Type
  
 instance Types Scheme where
   apply s (Forall ks t) = Forall ks (apply s t)
-  tv (Forall ks qt)     = tv qt
+  tv (Forall _ qt)      = tv qt
 
 data Assumption = Name :>: Scheme
 
 instance Types Assumption where
   apply s (i :>: sc) = i :>: (apply s sc)
-  tv      (i :>: sc) = tv sc
+  tv      (_ :>: sc) = tv sc
 
 find :: Name -> [Assumption] -> Infer Scheme
-find i [] = raise (UnboundIdentifier i)
+find i []                             = err (UnboundIdentifier i)
 find i ((i' :>: sc) : as) | i == i'   = return sc
                           | otherwise = find i as
 
@@ -146,12 +134,12 @@ instance Types [Type] where
   tv      = nub . concat . map tv
 
 getSubstitution :: Infer Substitution
-getSubstitution = view istCurrentSubstitution `fmap` get
+getSubstitution = view istCurrentSubstitution `fmap` getPassState
 
 extendSubstitution :: Substitution -> Infer ()
 extendSubstitution s' =
-  do s <- get
-     set (over istCurrentSubstitution (s' @@) s)
+  do s <- getPassState
+     setPassState (over istCurrentSubstitution (s' @@) s)
 
 unify :: Type -> Type -> Infer ()
 unify t1 t2 =
@@ -161,8 +149,8 @@ unify t1 t2 =
 
 gensym :: Kind -> Infer Type
 gensym k =
-  do s <- get
-     set (over istNextIdentifier (+1) s)
+  do s <- getPassState
+     setPassState (over istNextIdentifier (+1) s)
      let num  = view istNextIdentifier s
          str  = "gensym:" ++ show num
          name = Name unknownLocation TypeEnv num (pack str)
@@ -188,21 +176,16 @@ freshInst = undefined
 inferExpression :: ClassEnvironment -> [Assumption] ->
                    Expression ->
                    Infer ([Predicate], Type)
-inferExpression classEnv assumpts expr =
+inferExpression _classEnv assumpts expr =
   case expr of
     ConstantExp  _ cv   -> inferConstant cv
     ReferenceExp _ n    -> do sc <- find n assumpts
                               (ps :=> t) <- freshInst sc
                               return (ps, t)
-    LambdaExp    _ n  e -> error "FIXME, here"
+    LambdaExp    _ _  _ -> error "FIXME, here"
 
 infer :: Module -> Infer Module
 infer = undefined
 
 typeInfer :: Word -> Module -> Either InferenceError Module
-typeInfer gensymState mdl =
-  let inferM    = unInfer (infer mdl)
-      excM      = runStateT (InferenceState nullSubstitution gensymState) inferM
-      idM       = runExceptionT excM
-      resWState = runId idM
-  in fmap fst resWState
+typeInfer = undefined

@@ -1,41 +1,56 @@
-{-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE Rank2Types                 #-}
+{-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE UndecidableInstances       #-}
 module Bang.Monad(
          Compiler
-       , (==>), (==>|)
+       , BangError(..)
+       , BangWarning(..)
+       , runCompiler
+       , runPass
+       , getPassState, setPassState, overPassState, viewPassState
        , genName, genTypeRef, genVarRef
        , warn, err
        )
  where
 
-import Bang.Syntax.AST
-import Bang.Syntax.Location(unknownLocation)
-import Bang.Utils.Pretty(BangDoc)
-import Data.Text.Lazy(pack)
-import MonadLib
-import Text.PrettyPrint.Annotated(Doc)
+import           Bang.CommandLine(BangCommand, CommandsWithInputFile(..))
+import           Bang.Error(exit)
+import           Bang.Syntax.AST(NameEnvironment(..), Name(..),
+                                 Kind(..), Type(..), Expression(..))
+import           Bang.Syntax.Location(Location(..), Origin(..),
+                                      unknownLocation, ppLocation)
+import           Bang.Utils.Pretty(BangDoc)
+import           Control.Exception(tryJust)
+import           Control.Lens(Lens', over, set, view)
+import           Control.Lens.TH(makeLenses)
+import           Control.Monad(guard)
+import           Data.Text.Lazy(Text, pack)
+import qualified Data.Text.Lazy.IO as T
+import           System.Exit(ExitCode(..), exitWith)
+import           System.IO.Error(isDoesNotExistError)
+import           Text.PrettyPrint.Annotated(text, ($+$), nest, render)
 
 class BangError e where
-  ppError :: e -> BangDoc
+  ppError :: e -> (Maybe Location, BangDoc)
 
 class BangWarning w where
-  ppWarning :: w -> BangDoc
-
-instance BangWarning w => BangError w where
-  ppError = ppWarning
+  ppWarning :: w -> (Maybe Location, BangDoc)
 
 data CompilerState state = CompilerState {
-       csNextIdent       :: Word
-     , csPromoteWarnings :: Bool
-     , csWarnings        :: [BangDoc]
-     , csPassState       :: state
+       _csNextIdent       :: !Word
+     , _csPromoteWarnings :: !Bool
+     , _csWarnings        :: [BangDoc]
+     , _csPassState       :: !state
      }
 
-initialState :: CompilerState ()
-initialState = CompilerState 1 False [] ()
+makeLenses ''CompilerState
+
+initialState :: BangCommand -> CompilerState ()
+initialState _ = CompilerState 1 False [] ()
+
+-- -----------------------------------------------------------------------------
 
 newtype Compiler s a =
   Compiler { unCompiler :: CompilerState s -> IO (CompilerState s, a) }
@@ -56,33 +71,46 @@ instance Monad (Compiler s) where
                          do (st', a) <- unCompiler m st
                             unCompiler (k a) st')
 
-class PassTransition s1 s2 where
-  transition :: s1 -> s2
+runCompiler :: CommandsWithInputFile o =>
+               BangCommand -> o ->
+               (Origin -> Text -> Compiler () a) ->
+               IO a
+runCompiler cmd opts action =
+  do let path = view inputFile opts
+         orig = File path
+     mtxt <- tryJust (guard . isDoesNotExistError) (T.readFile path)
+     case mtxt of
+       Left  _   -> exit ("Unable to open file '" ++ path ++ "'")
+       Right txt -> snd `fmap` unCompiler (action orig txt) (initialState cmd)
 
-(==>) :: PassTransition s1 s2 =>
-         Compiler s1 a ->
-         (a -> Compiler s2 b) ->
-         Compiler s1 b
-m1 ==> k = Compiler (\ st ->
-                        do (st', a) <- unCompiler m1 st
-                           let next = k a
-                               ps'  = transition (csPassState st')
-                               st'' = st'{ csPassState = ps' }
-                           (_, b) <- unCompiler next st''
-                           return (st', b))
+runPass :: s2 -> (Compiler s2 a) -> Compiler s1 a
+runPass s2 action =
+  Compiler (\ cst1 ->
+             do let cst2 = set csPassState s2 cst1
+                    s1   = view csPassState cst1
+                (cst2', v) <- unCompiler action cst2
+                return (set csPassState s1 cst2', v))
 
-(==>|) :: PassTransition s1 s2 =>
-          Compiler s1 a ->
-          Compiler s2 b ->
-          Compiler s1 b
-m1 ==>| m2 = m1 ==> (const m2)
+getPassState :: Compiler s s
+getPassState = Compiler (\ st -> return (st, view csPassState st))
+
+setPassState :: s -> Compiler s ()
+setPassState ps' = Compiler (\ st -> return (set csPassState ps' st, ()))
+
+overPassState :: (s -> s) -> Compiler s ()
+overPassState f = Compiler (\ st -> return (over csPassState f st, ()))
+
+viewPassState :: Lens' s b -> Compiler s b
+viewPassState l = Compiler (\ st -> return (st, view (csPassState . l) st))
+
+-- -----------------------------------------------------------------------------
 
 genName :: NameEnvironment -> Compiler s Name
 genName env = Compiler (\ st ->
-                         do let current = csNextIdent st
+                         do let current = view csNextIdent st
                                 str = "gen:" ++ show current
                                 res = Name unknownLocation env current (pack str)
-                            return (st{ csNextIdent = current + 1 }, res))
+                            return (over csNextIdent (+1) st, res))
 
 genTypeRef :: Kind -> Compiler s Type
 genTypeRef k = TypeRef unknownLocation k `fmap` genName TypeEnv
@@ -90,10 +118,20 @@ genTypeRef k = TypeRef unknownLocation k `fmap` genName TypeEnv
 genVarRef :: Compiler s Expression
 genVarRef = ReferenceExp unknownLocation `fmap` genName VarEnv
 
+-- -----------------------------------------------------------------------------
+
+data WErrorWarning w = WErrorWarning w
+
+instance BangWarning w => BangError (WErrorWarning w) where
+  ppError (WErrorWarning w) =
+    let (loc, wdoc) = ppWarning w
+        edoc        = text "Warning lifted to error by -WError:" $+$ nest 3 wdoc
+    in (loc, edoc)
+
 warn :: BangWarning w => w -> Compiler s ()
 warn w = Compiler (\ st ->
-                     if csPromoteWarnings st
-                        then runError w
+                     if view csPromoteWarnings st
+                        then runError (WErrorWarning w)
                         else runWarning w >> return (st, ()))
 
 err :: BangError w => w -> Compiler s a
@@ -103,5 +141,9 @@ runWarning :: BangWarning w => w -> IO ()
 runWarning = undefined
 
 runError :: BangError w => w -> IO a
-runError = undefined
-
+runError e =
+  do putStrLn (go (ppError e))
+     exitWith (ExitFailure 1)
+ where
+   go (Nothing, doc) = render doc
+   go (Just a, doc) = render (ppLocation a $+$ nest 3 doc)

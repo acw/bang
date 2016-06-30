@@ -59,6 +59,7 @@ instance Eq Type where
   (TypeLambda _ _ at et) == (TypeLambda _ _ bt ft) = (at == bt) && (et == ft)
   (TypeApp    _ _ at bt) == (TypeApp    _ _ ct dt) = (at == ct) && (bt == dt)
   (TypeForAll     ns t)  == (TypeForAll     ms u)  = (ns == ms) && (t == u)
+  _                      == _                      = False
 
 kind :: Type -> Kind
 kind (TypeUnit   _ k)     = k

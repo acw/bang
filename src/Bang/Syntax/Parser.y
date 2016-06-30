@@ -5,26 +5,24 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTION_GHC -w              #-}
 module Bang.Syntax.Parser(
-         parseModule
-       , ParseError, showError
-       , lexWithLayout
+         runParser
+       , parseModule
        )
  where
 
-import           Bang.Syntax.AST
-import           Bang.Syntax.Lexer
-import           Bang.Syntax.Location
-import           Bang.Syntax.Token
-import           Data.Char(digitToInt)
-import           Data.List(union)
-import           Data.Map.Strict(Map)
-import qualified Data.Map.Strict as Map
-import           Data.Maybe(catMaybes)
-import           Data.Text.Lazy(Text)
-import qualified Data.Text.Lazy as T
-import           MonadLib
-
-import Debug.Trace
+import Bang.Monad(err)
+import Bang.Syntax.AST(Module(..), Name(..), NameEnvironment(..),
+                       Declaration(..), Expression(..), Type(..), Kind(..),
+                       ConstantValue(..))
+import Bang.Syntax.Location(Located(..), Origin, Position)
+import Bang.Syntax.ParserError(ParserError(..))
+import Bang.Syntax.ParserMonad(Parser, addFixities, registerName,
+                               unregisterNames, lookupName, parseError,
+                               runNextToken, runParser)
+import Bang.Syntax.Token(Token(..), Fixity(..))
+import Control.Monad(forM)
+import Data.List(union)
+import Data.Text.Lazy(Text)
 
 }
 
@@ -141,7 +139,7 @@ ValueDeclLHS :: { (Expression -> Declaration, [Name]) }
     {%
        case $1 of
          [] ->
-            raise (InternalError $2 "ValDeclLHS")
+            err (InternalError $2 "ValDeclLHS")
          [Located src (ValIdent rawName)] ->
            do name <- registerName True src VarEnv rawName
               return (ValueDeclaration name, [name])
@@ -269,158 +267,7 @@ listopt(p)
 
 {
 
-newtype Parser a = Parser {
-          unParser :: StateT ParserState (ExceptionT ParseError Id) a
-        }
- deriving (Functor, Applicative, Monad)
-
-data ParseError = LexError          Location Text
-                | ParseError        Location Token
-                | RedefinitionError Location Location Text
-                | InternalError     Location Text
-                | UnboundVariable   Location Text
-                | UnexpectedEOF
- deriving (Show)
-
-showError :: ParseError -> String
-showError (LexError      l t) = show l ++ ": lexer error around " ++ T.unpack t
-showError (ParseError    l t) = show l ++ ": parse error around " ++ showToken t
-showError  UnexpectedEOF      =           "Unexpected end of file"
-
-data ParserState = ParserState {
-       psPrecTable    :: Map Text Fixity
-     , psTokenStream  :: [Located Token]
-     , psNameDatabase :: Map (NameEnvironment, Text) Name
-     , psNextIdent    :: Word
-     }
-
-initialState :: [Located Token] -> ParserState
-initialState tokenStream = ParserState {
-    psPrecTable    = Map.empty
-  , psTokenStream  = tokenStream
-  , psNameDatabase = Map.empty
-  , psNextIdent    = 1
-  }
-
-instance StateM Parser ParserState where
-  get = Parser   get
-  set = Parser . set
-
-instance ExceptionM Parser ParseError where
-  raise = Parser . raise
-
-instance RunExceptionM Parser ParseError where
-  try m = Parser (try (unParser m))
-
-addFixities :: Location ->
-               (Word -> Fixity) -> Located Token -> [Located Token] ->
-               Parser ()
-addFixities src fixityBuilder lval names =
-  do value <- processInteger lval
-     let fixity = fixityBuilder value
-     forM_ names $ \ tok ->
-       do state <- get
-          name <- forceNameDefined VarEnv src tok state
-          let table' = Map.insert name fixity (psPrecTable state)
-          set state{ psPrecTable = table' }
- where
-  processInteger x =
-    case x of
-      Located _ (IntTok base text) ->
-        return (makeNumeric base text 0)
-      _ ->
-        raise (InternalError src "Non-number in fixity?")
-
-  --
-  makeNumeric base text acc =
-    case T.uncons text of
-      Nothing        -> acc
-      Just (x, rest) ->
-        let acc' = (acc * base) + charValue x
-        in makeNumeric base rest acc'
-  --
-  charValue = fromIntegral . digitToInt
-  --
-  tokenName t =
-    case t of
-      Located _ (TypeIdent   x) -> x
-      Located _ (ValIdent    x) -> x
-      Located _ (OpIdent   _ x) -> x
-      _                       ->
-        error "Internal error (tokenName in Parser.y)"
-  --
-  forceNameDefined env src token state =
-    do let name = tokenName token
-       case Map.lookup (env, name) (psNameDatabase state) of
-         Just _  -> return name
-         Nothing -> raise (UnboundVariable src name)
-
-registerName :: Bool -> Location -> NameEnvironment -> Text -> Parser Name
-registerName redefOk loc env name =
-  do state <- get
-     let key = (env, name)
-         db  = psNameDatabase state
-     case Map.lookup key db of
-       Nothing ->
-         do let res    = Name loc env (psNextIdent state) name
-                state' = state {
-                           psNameDatabase = Map.insert key res db
-                         , psNextIdent    = 1 + psNextIdent state
-                         }
-            set state'
-            return res
-       Just res | redefOk ->
-         return res
-       Just (Name origLoc _ _ _) ->
-         raise (RedefinitionError loc origLoc name)
-
-unregisterNames :: NameEnvironment -> [Name] -> Parser ()
-unregisterNames env names =
-  do state <- get
-     let db  = psNameDatabase state
-         db' = foldr (\ (Name _ _ _ n) m -> Map.delete (env, n) m) db names
-     set state{ psNameDatabase = db' }
-
-lookupName :: Location -> NameEnvironment -> Text -> Parser Name
-lookupName loc env name =
-  do state <- get
-     case Map.lookup (env, name) (psNameDatabase state) of
-       Nothing ->
-         raise (UnboundVariable loc name)
-       Just name ->
-         return name
-
-runNextToken :: (Located Token -> Parser a) -> Parser a
-runNextToken action =
-  do state <- get
-     case psTokenStream state of
-       [] ->
-         raise (InternalError unknownLocation "End of stream, but no EOF?")
-       (eof@(Located _ EOFTok) : _)    ->
-         action eof -- leave this on at the end of the stream
-       (x : rest) ->
-         do set (state{ psTokenStream = rest })
-            action x
-
-lexWithLayout :: Origin -> Position -> Text -> [Located Token]
-lexWithLayout src pos txt = lexer src (Just pos) txt
-
-parseModule :: Origin -> Text -> Either ParseError Module
-parseModule src txt =
-  let parserM   = unParser top_module
-      excM      = runStateT (initialState tokenStream)
-                    (parserM :: StateT ParserState (ExceptionT ParseError Id) Module)
-      idM       = runExceptionT (excM :: ExceptionT ParseError Id (Module, ParserState))
-      resWState = runId idM
-  in fmap fst resWState
- where
-  tokenStream  = lexWithLayout src initialPosition txt
-
-parseError :: Located Token -> Parser a
-parseError t =
-  case t of
-    Located _ EOFTok       -> raise UnexpectedEOF
-    Located p (ErrorTok t) -> raise (LexError p t)
-    Located p t            -> raise (ParseError p t)
+parseModule :: Parser Module
+parseModule = top_module
 
 }

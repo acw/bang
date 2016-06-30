@@ -3,14 +3,21 @@
 {
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS -w                 #-}
-module Bang.Syntax.Lexer(lexer)
+module Bang.Syntax.Lexer(
+         AlexReturn(..)
+       , AlexInput(..)
+       , alexScan
+       )
  where
 
-import           Bang.Syntax.Location
-import           Bang.Syntax.Name
-import           Bang.Syntax.Token
-import           Data.Char(isSpace, isAscii, ord)
+import           Bang.Syntax.Location(Location(..), Located(..), Origin(..),
+                                      Position(..), advanceWith, advanceWith',
+                                      locatedAt, initialPosition)
+import           Bang.Syntax.Token(Token(..), Fixity(..))
+import           Data.Char(isAscii, ord)
 import           Data.Int(Int64)
+import           Data.Map.Strict(Map)
+import qualified Data.Map.Strict as Map
 import           Data.Maybe(fromMaybe)
 import           Data.Text.Lazy(Text)
 import qualified Data.Text.Lazy as T
@@ -29,13 +36,13 @@ $typestart   = [A-Z\_]
 $valstart    = [a-z\_]
 $identrest   = [a-zA-Z0-9\_\.]
 $opident     = [\~\!\@\#\$\%\^\&\*\+\-\=\.\<\>\?\_\|:]
-$escape_char = [abfnrtv'\"\\]
+$escape_char = [abfnrtv'\"\\] --"
 
 :-
 
 -- Whitespace
   $white+                                          ;
-  "/*"[.\n]*"*/"                                       ;
+  "/*"[.\n]*"*/"                                   ;
 
 -- Numbers
   $decdigit+                                       { emitI 0 (IntTok 10)  }
@@ -48,12 +55,12 @@ $escape_char = [abfnrtv'\"\\]
 -- Identifier
   $typestart $identrest*                           { emitS TypeIdent               }
   $valstart $identrest*                            { emitS ValIdent                }
-  $opident+                                        { emitS (OpIdent (LeftAssoc 9)) }
+  $opident+                                        { emitO                         }
 
 -- Characters and Strings
   ['].[']                                          { emitS CharTok }
   ['] [\\] $escape_char [']                        { emitS CharTok }
-  [\"] ([^\"] | [\n] | ([\\] $escape_char))* [\"]  { emitS StringTok }
+  [\"] ([^\"] | [\n] | ([\\] $escape_char))* [\"]  { emitS StringTok } --"
 
 -- Symbols
   "("                                             { emitT "("     }
@@ -69,25 +76,36 @@ $escape_char = [abfnrtv'\"\\]
 
 {
 
-lexer :: Origin -> Maybe Position -> Text -> [Located Token]
-lexer src mbPos txt = go (AlexInput startPos txt)
- where
-  startPos = fromMaybe initialPosition mbPos
-  go input =
-    case alexScan input 0 of
-       AlexEOF                  -> let AlexInput pos _ = input
-                                       loc = Location src pos pos
-                                   in [EOFTok `locatedAt` loc]
-       AlexError input'         -> let AlexInput pos text = input'
-                                       (as, bs) = T.break isSpace text
-                                       pos' = advanceWith' pos as
-                                       input'' = AlexInput pos' bs
-                                       loc = Location src pos pos'
-                                   in (ErrorTok as `locatedAt` loc) : go input''
-       AlexSkip  input' _       -> go input'
-       AlexToken input' len act -> act src len input  : go input'
+type AlexAction = Origin -> Map Text Fixity -> Int -> AlexInput -> Located Token
 
 data AlexInput = AlexInput !Position Text
+
+emitT :: Text -> AlexAction
+emitT t = emitS (const (Special t))
+
+emitS :: (Text -> Token) -> AlexAction
+emitS mk src _ len (AlexInput pos t) = token `locatedAt` loc
+ where
+  txt   = T.take (fromIntegral len) t
+  token = mk txt
+  loc   = Location src pos (pos `advanceWith'` txt)
+
+emitI :: Int64 -> (Text -> Token) -> AlexAction
+emitI dropCount mk src _ len (AlexInput pos t) = token `locatedAt` loc
+ where
+  baseText = T.take (fromIntegral len) t
+  txt      = T.drop dropCount baseText
+  token    = mk txt
+  loc      = Location src pos (pos `advanceWith'` baseText)
+
+emitO :: AlexAction
+emitO src fixTable len (AlexInput pos t) =
+  case Map.lookup baseText fixTable of
+    Nothing -> OpIdent (LeftAssoc 9) baseText `locatedAt` loc
+    Just f  -> OpIdent f             baseText `locatedAt` loc
+ where
+  baseText = T.take (fromIntegral len) t
+  loc      = Location src pos (pos `advanceWith'` baseText)
 
 alexGetByte :: AlexInput -> Maybe (Word8, AlexInput)
 alexGetByte (AlexInput p t) =
@@ -96,25 +114,5 @@ alexGetByte (AlexInput p t) =
  where
   byteForChar c | isAscii c = fromIntegral (ord c)
                 | otherwise = 0
-
-type AlexAction = Origin -> Int -> AlexInput -> Located Token
-
-emitT :: Text -> AlexAction
-emitT str = emitS (const (Special str))
-
-emitS :: (Text -> Token) -> AlexAction
-emitS mk src len (AlexInput pos t) = token `locatedAt` loc
- where
-  txt   = T.take (fromIntegral len) t
-  token = mk txt
-  loc   = Location src pos (pos `advanceWith'` txt)
-
-emitI :: Int64 -> (Text -> Token) -> AlexAction
-emitI dropCount mk src len (AlexInput pos t) = token `locatedAt` loc
- where
-  baseText = T.take (fromIntegral len) t
-  txt      = T.drop dropCount baseText
-  token    = mk txt
-  loc      = Location src pos (pos `advanceWith'` baseText)
 
 }
