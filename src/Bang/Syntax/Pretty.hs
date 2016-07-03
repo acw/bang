@@ -1,5 +1,9 @@
 module Bang.Syntax.Pretty(
          ppModule
+       , ppDeclaration
+       , ppExpression
+       , ppType
+       , ppName
        )
  where
 
@@ -53,11 +57,8 @@ ppType t =
     TypeUnit   _ _      -> text "()"
     TypePrim   _ _ n    -> text (unpack n)
     TypeRef    _ _ n    -> ppName n
-    TypeLambda _ _ a  b -> ppType a <> space <> text "->" <> space <> ppType b
+    TypeLambda _ _ as b -> hsep (map ppType as) <> space <> text "->" <> space <> ppType b
     TypeApp    _ _ a  b -> ppType a <> space <> ppType b
-    TypeForAll     ns s ->
-      text "∀" <> space <> hsep (punctuate comma (map ppName ns)) <>
-      space <> text "." <> space <> ppType s
 
 text' :: Text -> Doc a
 text' = text . unpack

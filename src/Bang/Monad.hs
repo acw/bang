@@ -10,7 +10,7 @@ module Bang.Monad(
        , runCompiler
        , runPass
        , getPassState, setPassState, overPassState, viewPassState
-       , genName, genTypeRef, genVarRef
+       , registerNewName, genName, genTypeRef, genVarRef
        , warn, err
        )
  where
@@ -83,13 +83,14 @@ runCompiler cmd opts action =
        Left  _   -> exit ("Unable to open file '" ++ path ++ "'")
        Right txt -> snd `fmap` unCompiler (action orig txt) (initialState cmd)
 
-runPass :: s2 -> (Compiler s2 a) -> Compiler s1 a
+runPass :: s2 -> (Compiler s2 a) -> Compiler s1 (s2, a)
 runPass s2 action =
   Compiler (\ cst1 ->
              do let cst2 = set csPassState s2 cst1
                     s1   = view csPassState cst1
                 (cst2', v) <- unCompiler action cst2
-                return (set csPassState s1 cst2', v))
+                let retval = (view csPassState cst2', v)
+                return (set csPassState s1 cst2', retval))
 
 getPassState :: Compiler s s
 getPassState = Compiler (\ st -> return (st, view csPassState st))
@@ -104,6 +105,13 @@ viewPassState :: Lens' s b -> Compiler s b
 viewPassState l = Compiler (\ st -> return (st, view (csPassState . l) st))
 
 -- -----------------------------------------------------------------------------
+
+registerNewName :: NameEnvironment -> Text -> Compiler s Name
+registerNewName env name =
+  Compiler (\ st ->
+              do let current = view csNextIdent st
+                     res     = Name unknownLocation env current name
+                 return (over csNextIdent (+1) st, res))
 
 genName :: NameEnvironment -> Compiler s Name
 genName env = Compiler (\ st ->

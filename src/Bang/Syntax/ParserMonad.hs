@@ -2,6 +2,7 @@
 {-# LANGUAGE TemplateHaskell   #-}
 module Bang.Syntax.ParserMonad(
          Parser
+       , NameDatabase
        , runParser
        , addFixities
        , registerName
@@ -21,7 +22,7 @@ import           Bang.Syntax.Location(Location(..), Located(..),
                                       advanceWith', locatedAt)
 import           Bang.Syntax.ParserError(ParserError(..))
 import           Bang.Syntax.Token(Token(..), Fixity)
-import           Control.Lens(view, set, over)
+import           Control.Lens(view, set, over, _1)
 import           Control.Lens.TH(makeLenses)
 import           Control.Monad(forM_)
 import           Data.Char(digitToInt, isSpace)
@@ -29,6 +30,8 @@ import           Data.Map.Strict(Map)
 import qualified Data.Map.Strict as Map
 import           Data.Text.Lazy(Text)
 import qualified Data.Text.Lazy as T
+
+type NameDatabase = Map (NameEnvironment, Text) Name
 
 data ParserState = ParserState {
        _psPrecTable    :: Map Text Fixity
@@ -42,8 +45,9 @@ makeLenses ''ParserState
 
 type Parser a = Compiler ParserState a
 
-runParser :: Origin -> Text -> Parser a -> Compiler ps a
-runParser origin stream action = runPass pstate action
+runParser :: Origin -> Text -> Parser a -> Compiler ps (NameDatabase,  a)
+runParser origin stream action =
+  over _1 (view psNameDatabase) `fmap` runPass pstate action
  where
   initInput = AlexInput initialPosition stream
   pstate    = ParserState Map.empty Map.empty 1 origin initInput

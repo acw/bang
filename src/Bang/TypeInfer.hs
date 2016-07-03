@@ -1,191 +1,169 @@
-{-# LANGUAGE DeriveFunctor              #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE TemplateHaskell            #-}
-module Bang.TypeInfer
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell   #-}
+module Bang.TypeInfer(runTypeInference)
  where
 
 import           Bang.Monad(Compiler, BangError(..), err,
-                            getPassState, setPassState)
+                            runPass, getPassState, setPassState,
+                            viewPassState, overPassState,
+                            registerNewName, genName)
 import           Bang.Syntax.AST
-import           Bang.Syntax.Location(unknownLocation)
-import           Control.Lens(view, over)
+import           Bang.Syntax.Location(Location, unknownLocation)
+import           Bang.Syntax.ParserMonad(NameDatabase(..))
+import           Bang.Syntax.Pretty(ppName)
+import           Bang.Utils.Pretty(BangDoc)
+import           Control.Lens(set, view, over)
 import           Control.Lens.TH(makeLenses)
 import           Data.List(union, nub, concat)
 import           Data.Map.Strict(Map)
 import qualified Data.Map.Strict as Map
-import           Data.Text.Lazy(pack)
-
--- -----------------------------------------------------------------------------
-
-type Substitution = Map Name Type
-
-class Types t where
-  apply :: Substitution -> t -> t
-  tv    :: t          -> [Name]
-
-nullSubstitution :: Substitution
-nullSubstitution = Map.empty
-
-(⟼) :: Name -> Type -> Substitution
-(⟼) = Map.singleton
-
-infixr 4 @@
-(@@) :: Substitution -> Substitution -> Substitution
-(@@) s1 s2 =
-  let s2' = Map.map (\ t -> apply s1 t) s2
-  in Map.union s2' s1
-
--- -----------------------------------------------------------------------------
-
-data InferenceError = UnificationError  Type  Type
-                    | OccursCheckFails  Name  Type
-                    | KindCheckFails    Name  Type
-                    | MatchFailure      Type  Type
-                    | UnboundIdentifier       Name
-                    | MergeFailure      Substitution Substitution
- deriving (Show)
-
-instance BangError InferenceError where
-  ppError = undefined
+import           Data.Set(Set)
+import qualified Data.Set as Set
+import           Data.Text.Lazy(Text, pack)
+import           Text.PrettyPrint.Annotated(text, (<+>), quotes)
 
 data InferenceState = InferenceState {
-       _istCurrentSubstitution :: Substitution
-     , _istNextIdentifier      :: Word
+       _nameDatabase :: NameDatabase
      }
 
 makeLenses ''InferenceState
 
 type Infer a = Compiler InferenceState a
 
+runInfer :: NameDatabase -> Infer a -> Compiler ps a
+runInfer ndb action = snd `fmap` runPass initial action
+ where initial = InferenceState ndb
+
 -- -----------------------------------------------------------------------------
 
-merge :: Substitution -> Substitution -> Infer Substitution
-merge s1 s2 | agree     = return (Map.union s1 s2)
-            | otherwise = err (MergeFailure s1 s2)
- where
-   names = Map.keys (Map.intersection s1 s2)
-   agree = all (\ v ->
-                 let refv = TypeRef (error "Internal error, TypeInfer") Star v
-                 in apply s1 refv == apply s2 refv)
-               names
+data InferError = UnboundVariable Location Name
+ deriving (Show)
 
-mostGeneralUnifier :: Type -> Type -> Infer Substitution
-mostGeneralUnifier t1 t2 =
-  case (t1, t2) of
-    (TypeApp _ _ l r, TypeApp _ _ l' r') ->
-      do s1 <- mostGeneralUnifier l l'
-         s2 <- mostGeneralUnifier (apply s1 r) (apply s1 r')
-         return (s2 @@ s1)
-    (u@(TypeRef _ _ _), t) -> varBind u t
-    (t, u@(TypeRef _ _ _)) -> varBind u t
-    (TypePrim _ _ tc1, TypePrim _ _ tc2) | tc1 == tc2 -> return nullSubstitution
-    _ -> err (UnificationError t1 t2)
+instance BangError InferError where
+  ppError = prettyError
 
-varBind :: Type -> Type -> Infer Substitution
-varBind = undefined
---  | TypeRef _ _ u' <- t, u' == u = return nullSubstitution
---  | u `elem` tv t                = err (OccursCheckFails u t)
---  | k /= kind t                  = err (KindCheckFails u t)
---  | otherwise                    = return (u ⟼  t)
---
-match :: Type -> Type -> Infer Substitution
-match t1 t2 =
-  case (t1, t2) of
-    (TypeApp _ _ l r, TypeApp _ _ l' r') ->
-      do sl <- match l l'
-         sr <- match r r'
-         merge sl sr
-    (TypeRef _ k u, t) | k == kind t -> return (u ⟼  t)
-    (TypePrim _ _ tc1, TypePrim _ _ tc2) | tc1 == tc2 -> return nullSubstitution
-    _ -> err (MatchFailure t1 t2)
+prettyError :: InferError -> (Maybe Location, BangDoc)
+prettyError e =
+  case e of
+    UnboundVariable l n ->
+      (Just l, text "Unbound variable '" <+> quotes (ppName n))
 
-data Scheme = Forall [Kind] Type
- 
-instance Types Scheme where
-  apply s (Forall ks t) = Forall ks (apply s t)
-  tv (Forall _ qt)      = tv qt
+-- -----------------------------------------------------------------------------
 
-data Assumption = Name :>: Scheme
+type Substitutions = Map Name Type
 
-instance Types Assumption where
-  apply s (i :>: sc) = i :>: (apply s sc)
-  tv      (_ :>: sc) = tv sc
+noSubstitutions :: Substitutions
+noSubstitutions  = Map.empty
 
-find :: Name -> [Assumption] -> Infer Scheme
-find i []                             = err (UnboundIdentifier i)
-find i ((i' :>: sc) : as) | i == i'   = return sc
-                          | otherwise = find i as
+composeSubstitutions :: Substitutions -> Substitutions -> Substitutions
+composeSubstitutions s1 s2 = Map.map (apply s1) s2 `Map.union` s1
+
+class Types a where
+  freeTypeVariables :: a -> Set Name
+  apply             :: Substitutions -> a -> a
 
 instance Types Type where
-  apply s v@(TypeRef _ _ n) = case Map.lookup n s of
-                                Just t  -> t
-                                Nothing -> v
-  apply s (TypeApp l k t u) = TypeApp l k (apply s t) (apply s u)
-  apply _ t                 = t
-  --
-  tv (TypeRef _ _ n)   = [n]
-  tv (TypeApp _ _ t u) = tv t `union` tv u
-  tv _                 = []
+  freeTypeVariables t =
+    case t of
+      TypeUnit   _ _      -> Set.empty
+      TypePrim   _ _ _    -> Set.empty
+      TypeRef    _ _ n    -> Set.singleton n
+      TypeLambda _ _ ns e -> Set.unions (map freeTypeVariables ns) `Set.union`
+                             freeTypeVariables e
+      TypeApp    _ _ a  b -> freeTypeVariables a `Set.union` freeTypeVariables b
+  apply substs t =
+    case t of
+      TypeRef    _ _ n    -> case Map.lookup n substs of
+                             Nothing -> t
+                             Just t' -> t'
+      TypeLambda l k ns e -> TypeLambda l k (apply substs ns) (apply substs e)
+      TypeApp    l k a  b -> TypeApp l k (apply substs a) (apply substs b)
+      _                   -> t
 
-instance Types [Type] where
-  apply s = map (apply s)
-  tv      = nub . concat . map tv
+instance Types a => Types [a] where
+  freeTypeVariables l = Set.unions (map freeTypeVariables l)
+  apply             s = map (apply s)
 
-getSubstitution :: Infer Substitution
-getSubstitution = view istCurrentSubstitution `fmap` getPassState
+-- -----------------------------------------------------------------------------
 
-extendSubstitution :: Substitution -> Infer ()
-extendSubstitution s' =
-  do s <- getPassState
-     setPassState (over istCurrentSubstitution (s' @@) s)
+inferModule :: Module -> Infer Module
+inferModule = undefined
 
-unify :: Type -> Type -> Infer ()
-unify t1 t2 =
-  do s <- getSubstitution
-     u <- mostGeneralUnifier (apply s t1) (apply s t2)
-     extendSubstitution u
+runTypeInference :: NameDatabase -> Module -> Compiler ps Module
+runTypeInference ndb mod = runInfer ndb (inferModule mod)
 
-gensym :: Kind -> Infer Type
-gensym k =
-  do s <- getPassState
-     setPassState (over istNextIdentifier (+1) s)
-     let num  = view istNextIdentifier s
-         str  = "gensym:" ++ show num
-         name = Name unknownLocation TypeEnv num (pack str)
-     return (TypeRef unknownLocation k name)
-
-data Predicate = IsIn String Type
-  deriving (Eq)
-
-inferConstant :: ConstantValue -> Infer ([Predicate], Type)
-inferConstant c =
-  do v <- gensym Star
-     let constraint | ConstantInt    _ _ <- c = IsIn "IntLike" v
-                    | ConstantChar     _ <- c = IsIn "CharLake" v
-                    | ConstantString   _ <- c = IsIn "StringLike" v
-                    | ConstantFloat    _ <- c = IsIn "FloatLike" v
-     return ([constraint], v)
-
-data ClassEnvironment = [Predicate] :=> Type
-
-freshInst :: Scheme -> Infer ClassEnvironment
-freshInst = undefined
-
-inferExpression :: ClassEnvironment -> [Assumption] ->
-                   Expression ->
-                   Infer ([Predicate], Type)
-inferExpression _classEnv assumpts expr =
-  case expr of
-    ConstantExp  _ cv   -> inferConstant cv
-    ReferenceExp _ n    -> do sc <- find n assumpts
-                              (ps :=> t) <- freshInst sc
-                              return (ps, t)
-    LambdaExp    _ _  _ -> error "FIXME, here"
-
-infer :: Module -> Infer Module
-infer = undefined
-
-typeInfer :: Word -> Module -> Either InferenceError Module
-typeInfer = undefined
+-- data Scheme = Scheme [Name] Type
+-- 
+-- getName :: NameEnvironment -> Text -> Infer Name
+-- getName env nameText =
+--   do namedb <- viewPassState nameDatabase
+--      let key = (env, nameText)
+--      case Map.lookup key namedb of
+--        Nothing ->
+--          do name <- registerNewName env nameText
+--             overPassState (set nameDatabase (Map.insert key name namedb))
+--             return name
+--        Just name ->
+--          return name
+-- 
+-- runTypeInference :: NameDatabase -> Module -> Compiler ps Module
+-- runTypeInference nameDB mod =
+--   snd `fmap` (runPass initialState (inferModule mod))
+--  where initialState = InferenceState nameDB
+-- 
+-- type Substitutions = Map Name Type
+-- 
+-- nullSubst :: Substitutions
+-- nullSubst = Map.empty
+-- 
+-- type TypeEnv = Map Name Scheme
+-- 
+-- class Substitutable a where
+--   apply :: Substitutions -> a -> Type
+-- 
+-- instance Substitutable Type where
+--   apply subs t =
+--     case t of
+--       TypeUnit _ _   -> t
+--       TypePrim _ _ _ -> t
+--       TypeRef  _ _ n -> case Map.lookup n subs of
+--                           Nothing -> t
+--                           Just t' -> t'
+--       TypeLambda l k ats bt ->
+--         TypeLambda l k (map (apply subs) ats) (apply subs bt)
+--       TypeApp l k a b ->
+--         TypeApp l k (apply subs a) (apply subs b)
+--       TypeForAll ns t ->
+--         TypeForAll ns (apply subs t)
+-- 
+-- instance Substitutable Name where
+--   apply subs n =
+--     case Map.lookup n subs of
+--       Nothing               -> TypeRef unknownLocation Star n
+--       Just t                -> t
+-- 
+-- instantiate :: Scheme -> Infer Type
+-- instantiate =
+--   do 
+-- 
+-- inferExpression :: TypeEnv -> Expression ->
+--                    Infer (Substitutions, Type)
+-- inferExpression typeEnv expr =
+--   case expr of
+--     ConstantExp  s cv   -> do memName <- getName TypeEnv "Memory"
+--                               return (nullSubst, TypeRef s Star memName)
+--     ReferenceExp s n    -> case Map.lookup n typeEnv of
+--                              Nothing -> err (UnboundVariable s n)
+--                              Just t  -> do t' <- instantiate t
+--                                            return (nullSubst, t')
+--     LambdaExp    s ns e -> do localTypeNames <- mapM (const (genName TypeEnv)) ns
+--                               let localSchemes = map (Scheme [] . TypeRef s Star) localTypeNames
+--                                   localEnv     = Map.fromList (zip ns localSchemes)
+--                                   typeEnv'     = typeEnv `Map.union` localEnv
+--                               (s1, t1) <- inferExpression typeEnv' e
+--                               return (s1, TypeLambda s (Star `KindArrow` Star)
+--                                                     (map (apply s1) localTypeNames)
+--                                                     t1)
+-- 
+-- inferModule :: Module -> Infer Module
+-- inferModule = undefined

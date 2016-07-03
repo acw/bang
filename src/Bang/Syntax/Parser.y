@@ -181,14 +181,14 @@ Type :: { Type }
            [] -> return result
            xs ->
              do unregisterNames TypeEnv xs
-                return (TypeForAll xs result)
+                return result
       }
 
 RawType :: { (Type, [Name]) }
   : RawType '->' BaseType {%
       do let (p1, names1) = $1
              (p2, names2) = $3
-         return (TypeLambda $2 (Star `KindArrow` Star) p1 p2, union names1 names2)
+         return (TypeLambda $2 (Star `KindArrow` Star) [p1] p2, union names1 names2)
      }
   | BaseType           { $1 }
 

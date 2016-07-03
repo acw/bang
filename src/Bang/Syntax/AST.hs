@@ -47,9 +47,8 @@ data ConstantValue = ConstantInt    Word Text
 data Type = TypeUnit   Location Kind
           | TypePrim   Location Kind Text
           | TypeRef    Location Kind Name
-          | TypeLambda Location Kind Type   Type
+          | TypeLambda Location Kind [Type] Type
           | TypeApp    Location Kind Type   Type
-          | TypeForAll               [Name] Type
  deriving (Show)
 
 instance Eq Type where
@@ -58,7 +57,6 @@ instance Eq Type where
   (TypeRef  _ _ n)       == (TypeRef  _ _ m)       = n == m
   (TypeLambda _ _ at et) == (TypeLambda _ _ bt ft) = (at == bt) && (et == ft)
   (TypeApp    _ _ at bt) == (TypeApp    _ _ ct dt) = (at == ct) && (bt == dt)
-  (TypeForAll     ns t)  == (TypeForAll     ms u)  = (ns == ms) && (t == u)
   _                      == _                      = False
 
 kind :: Type -> Kind
@@ -67,7 +65,6 @@ kind (TypePrim   _ k _)   = k
 kind (TypeRef    _ k _)   = k
 kind (TypeLambda _ k _ _) = k
 kind (TypeApp    _ k _ _) = k
-kind (TypeForAll     _ t) = kind t
 
 data Kind = Star
           | KindArrow Kind Kind
