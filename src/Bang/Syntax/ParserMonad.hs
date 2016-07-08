@@ -13,9 +13,10 @@ module Bang.Syntax.ParserMonad(
        )
  where
 
+import           Bang.AST.Name(Name, NameEnvironment(..), mkName,
+                               nameLocation, nameText)
 import           Bang.Monad(Compiler, err, runPass,
                             getPassState, overPassState, viewPassState)
-import           Bang.Syntax.AST(Name(..), NameEnvironment(..))
 import           Bang.Syntax.Lexer(AlexReturn(..), AlexInput(..), alexScan)
 import           Bang.Syntax.Location(Location(..), Located(..),
                                       Origin(..), initialPosition,
@@ -107,19 +108,19 @@ registerName redefOk loc env name =
      let key = (env, name)
      case Map.lookup key (view psNameDatabase state) of
        Nothing ->
-         do let res = Name loc env (view psNextIdent state) name
+         do let res = mkName name env loc (view psNextIdent state)
             overPassState (over psNameDatabase (Map.insert key res) .
                            over psNextIdent (+1))
             return res
        Just res | redefOk ->
          return res
-       Just (Name origLoc _ _ _) ->
-         err (RedefinitionError loc origLoc name)
+       Just name' ->
+         err (RedefinitionError loc (view nameLocation name') name)
 
 unregisterNames :: NameEnvironment -> [Name] -> Parser ()
 unregisterNames env names =
   do db <- viewPassState psNameDatabase
-     let db' = foldr (\ (Name _ _ _ n) m -> Map.delete (env, n) m) db names
+     let db' = foldr (\ n m -> Map.delete (env, view nameText n) m) db names
      overPassState (set psNameDatabase db')
 
 lookupName :: Location -> NameEnvironment -> Text -> Parser Name

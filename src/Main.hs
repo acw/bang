@@ -1,8 +1,7 @@
-import           Bang.CommandLine
-import           Bang.Monad
-import           Bang.Syntax.Lexer()
+import           Bang.CommandLine(getCommand, BangCommand(..), helpString)
+import           Bang.AST(ppModule)
+import           Bang.Monad(runCompiler)
 import           Bang.Syntax.Parser(runParser, parseModule)
-import           Bang.Syntax.Pretty(ppModule)
 import           Bang.TypeInfer(runTypeInference)
 import           Data.Version(showVersion)
 import           Paths_bang(version)

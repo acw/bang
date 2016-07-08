@@ -3,14 +3,16 @@
 module Bang.TypeInfer(runTypeInference)
  where
 
+runTypeInference :: a
+runTypeInference = undefined
+
+{- Better version 
 import           Bang.Monad(Compiler, BangError(..), err,
                             runPass, getPassState, setPassState,
                             viewPassState, overPassState,
                             registerNewName, genName)
-import           Bang.Syntax.AST
 import           Bang.Syntax.Location(Location, unknownLocation)
 import           Bang.Syntax.ParserMonad(NameDatabase(..))
-import           Bang.Syntax.Pretty(ppName)
 import           Bang.Utils.Pretty(BangDoc)
 import           Control.Lens(set, view, over)
 import           Control.Lens.TH(makeLenses)
@@ -91,7 +93,7 @@ inferModule = undefined
 
 runTypeInference :: NameDatabase -> Module -> Compiler ps Module
 runTypeInference ndb mod = runInfer ndb (inferModule mod)
-
+-}
 -- data Scheme = Scheme [Name] Type
 -- 
 -- getName :: NameEnvironment -> Text -> Infer Name

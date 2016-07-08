@@ -15,10 +15,11 @@ module Bang.Monad(
        )
  where
 
+import           Bang.AST.Expression(Expression, mkRefExp)
+import           Bang.AST.Name(NameEnvironment(..), Name, mkName)
+import           Bang.AST.Type(Kind(..), Type, mkTypeRef)
 import           Bang.CommandLine(BangCommand, CommandsWithInputFile(..))
 import           Bang.Error(exit)
-import           Bang.Syntax.AST(NameEnvironment(..), Name(..),
-                                 Kind(..), Type(..), Expression(..))
 import           Bang.Syntax.Location(Location(..), Origin(..),
                                       unknownLocation, ppLocation)
 import           Bang.Utils.Pretty(BangDoc)
@@ -110,21 +111,22 @@ registerNewName :: NameEnvironment -> Text -> Compiler s Name
 registerNewName env name =
   Compiler (\ st ->
               do let current = view csNextIdent st
-                     res     = Name unknownLocation env current name
+                     res     = mkName name env unknownLocation current
                  return (over csNextIdent (+1) st, res))
 
 genName :: NameEnvironment -> Compiler s Name
-genName env = Compiler (\ st ->
-                         do let current = view csNextIdent st
-                                str = "gen:" ++ show current
-                                res = Name unknownLocation env current (pack str)
-                            return (over csNextIdent (+1) st, res))
+genName env =
+  Compiler (\ st ->
+             do let current = view csNextIdent st
+                    str = "gen:" ++ show current
+                    res = mkName (pack str) env unknownLocation current
+                return (over csNextIdent (+1) st, res))
 
 genTypeRef :: Kind -> Compiler s Type
-genTypeRef k = TypeRef unknownLocation k `fmap` genName TypeEnv
+genTypeRef k = mkTypeRef unknownLocation k `fmap` genName TypeEnv
 
 genVarRef :: Compiler s Expression
-genVarRef = ReferenceExp unknownLocation `fmap` genName VarEnv
+genVarRef = mkRefExp unknownLocation `fmap` genName VarEnv
 
 -- -----------------------------------------------------------------------------
 

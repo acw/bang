@@ -11,9 +11,10 @@ module Bang.Syntax.Parser(
  where
 
 import Bang.Monad(err)
-import Bang.Syntax.AST(Module(..), Name(..), NameEnvironment(..),
-                       Declaration(..), Expression(..), Type(..), Kind(..),
-                       ConstantValue(..))
+import Bang.AST(Name, Module, NameEnvironment(..), mkModule)
+import Bang.AST.Declaration(Declaration, mkTypeDecl, mkPrimDecl, mkValueDecl)
+import Bang.AST.Expression(ConstantValue(..), Expression, mkConstExp, mkRefExp, mkLambdaExp)
+import Bang.AST.Type(Type, Kind(..), mkTypeRef, mkFunType, mkTypeApp)
 import Bang.Syntax.Location(Located(..), Origin, Position)
 import Bang.Syntax.ParserError(ParserError(..))
 import Bang.Syntax.ParserMonad(Parser, addFixities, registerName,
@@ -119,7 +120,7 @@ top_module :: { Module }
     {%
        do let Located src (TypeIdent rawName) = $2
           name <- registerName False src ModuleEnv rawName
-          return (Module name $3) }
+          return (mkModule name $3) }
 
 Declaration :: { Maybe Declaration }
   : ValueDeclaration  { Just $1 }
@@ -142,12 +143,12 @@ ValueDeclLHS :: { (Expression -> Declaration, [Name]) }
             err (InternalError $2 "ValDeclLHS")
          [Located src (ValIdent rawName)] ->
            do name <- registerName True src VarEnv rawName
-              return (ValueDeclaration name, [name])
+              return (mkValueDecl name src , [name])
          ((Located src (ValIdent rawName)) : args) ->
            do name <- registerName True src VarEnv rawName
               argNames <- forM args $ \ (Located asrc (ValIdent argName)) ->
                             registerName True asrc VarEnv argName
-              let builder = ValueDeclaration name . LambdaExp $2 argNames
+              let builder = mkValueDecl name src . mkLambdaExp $2 argNames
               return (builder, argNames)
     }
 
@@ -164,13 +165,13 @@ TypeDeclaration :: { Declaration }
     {%
        do let Located src (ValIdent rawName) = $1
           name <- registerName True src VarEnv rawName
-          return (TypeDeclaration name $3) }
+          return (mkTypeDecl name src $3) }
   | 'primitive' 'type' TypeIdent '=' String
     {%
        do let Located src (TypeIdent rawName) = $3
               Located _   (StringTok rawText) = $5
           name <- registerName False src TypeEnv rawName
-          return (PrimTypeDeclaration name rawText) }
+          return (mkPrimDecl name src rawText) }
 
 -- -----------------------------------------------------------------------------
 
@@ -188,7 +189,7 @@ RawType :: { (Type, [Name]) }
   : RawType '->' BaseType {%
       do let (p1, names1) = $1
              (p2, names2) = $3
-         return (TypeLambda $2 (Star `KindArrow` Star) [p1] p2, union names1 names2)
+         return (mkFunType $2 [p1] p2, union names1 names2)
      }
   | BaseType           { $1 }
 
@@ -196,11 +197,11 @@ BaseType :: { (Type, [Name]) }
   : TypeIdent   {%
        do let Located src (TypeIdent rawName) = $1
           name <- lookupName src TypeEnv rawName
-          return (TypeRef src Star name, []) }
+          return (mkTypeRef src Unknown name, []) }
   | ValIdent    {%
        do let Located src (ValIdent rawName) = $1
           name <- registerName True src TypeEnv rawName
-          return (TypeRef src Star name, [name])
+          return (mkTypeRef src Unknown name, [name])
      }
 
 -- -----------------------------------------------------------------------------
@@ -212,23 +213,23 @@ BaseExpression :: { Expression }
   : OpIdent  {%
                 do let Located src (OpIdent _ rawName) = $1
                    name <- lookupName src VarEnv rawName
-                   return (ReferenceExp src name) }
+                   return (mkRefExp src name) }
   | ValIdent {%
                 do let Located src (ValIdent rawName) = $1
                    name <- lookupName src VarEnv rawName
-                   return (ReferenceExp src name) }
+                   return (mkRefExp src name) }
   | Integer  {%
                 do let Located src (IntTok base val) = $1
-                   return (ConstantExp src (ConstantInt base val)) }
+                   return (mkConstExp src (ConstantInt base val)) }
   | String   {%
                 do let Located src (StringTok val) = $1
-                   return (ConstantExp src (ConstantString val)) }
+                   return (mkConstExp src (ConstantString val)) }
   | Float    {%
                 do let Located src (FloatTok val) = $1
-                   return (ConstantExp src (ConstantFloat val)) }
+                   return (mkConstExp src (ConstantFloat val)) }
   | Char     {%
                 do let Located src (CharTok val) = $1
-                   return (ConstantExp src (ConstantChar val)) }
+                   return (mkConstExp src (ConstantChar val)) }
 
 -- -----------------------------------------------------------------------------
 
