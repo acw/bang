@@ -7,11 +7,14 @@ import           Bang.AST(Name, Module, moduleDeclarations, ppName)
 import           Bang.AST.Declaration(Declaration(..), declName,
                                       TypeDeclaration, ValueDeclaration,
                                       tdName, tdLocation, tdType,
-                                      vdName, vdLocation, vdDeclaredType)
+                                      vdName, vdLocation, vdDeclaredType,
+                                      vdFreeTypeVariables,
+                                      vdValue, vdFreeValueVariables)
 import           Bang.Monad(Compiler, BangError(..), err)
 import           Bang.Syntax.Location(Location, ppLocation)
+import           Bang.Utils.FreeVars(CanHaveFreeVars(..))
 import           Bang.Utils.Pretty(BangDoc)
-import           Control.Lens(view, set)
+import           Control.Lens(view, set, over)
 import           Control.Monad(foldM)
 import           Data.Map.Strict(Map)
 import qualified Data.Map.Strict as Map
@@ -41,7 +44,7 @@ runPostProcessor :: Module -> Compiler ps Module
 runPostProcessor mdl =
   do declTable <- makeDeclarationTable mdl
      mdl' <- combineTypeValueDeclarations declTable mdl
-     return mdl'
+     return (addFreeVarsToDecls mdl')
 
 -- -----------------------------------------------------------------------------
 
@@ -102,4 +105,18 @@ combineTypeValueDeclarations table m =
             (x:) `fmap` process rest
           Just (Just td, _) ->
             do let vd' = set vdDeclaredType (Just (view tdType td)) vd
-               (DeclVal vd' :) `fmap` process rest 
+               (DeclVal vd' :) `fmap` process rest
+
+-- -----------------------------------------------------------------------------
+
+addFreeVarsToDecls :: Module -> Module
+addFreeVarsToDecls = over moduleDeclarations (map process)
+ where
+  process (DeclVal vd) =
+    let dtype = view vdDeclaredType vd
+        dval  = view vdValue        vd
+    in DeclVal (set vdFreeTypeVariables  (freeVariables dtype) $
+                set vdFreeValueVariables (freeVariables dval)  vd)
+  process x = x
+
+

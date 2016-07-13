@@ -32,6 +32,7 @@ import Data.Text.Lazy(Text)
 import Control.Lens(Lens', view, set, lens)
 import Control.Lens(makeLenses)
 import Text.PrettyPrint.Annotated(Doc, text, (<+>), ($+$), empty)
+import Text.PrettyPrint.Annotated(braces, punctuate, comma, hsep)
 
 data TypeDeclaration = TypeDeclaration
      { _tdName     :: Name
@@ -69,8 +70,13 @@ class MkValueDecl a where
   mkValueDecl :: Name -> Location -> Expression -> a
 
 ppValueDeclaration :: ValueDeclaration -> Doc a
-ppValueDeclaration vd = typedecl $+$ valuedecl
+ppValueDeclaration vd = frees $+$ typedecl $+$ valuedecl
  where
+  frees =
+    text "free type variables: " <+>
+    braces (hsep (punctuate comma (map ppName (_vdFreeTypeVariables vd)))) $+$
+    text "free value variables: " <+>
+    braces (hsep (punctuate comma (map ppName (_vdFreeValueVariables vd))))
   typedecl
     | Just dt <- _vdDeclaredType vd =
         ppTypeDeclaration (TypeDeclaration (_vdName vd) (_vdLocation vd) dt)

@@ -33,7 +33,9 @@ module Bang.AST.Type
 
 import Bang.AST.Name(Name, ppName)
 import Bang.Syntax.Location(Location)
+import Bang.Utils.FreeVars(CanHaveFreeVars(..))
 import Control.Lens.TH(makeLenses)
+import Data.List(foldl', union)
 import Text.PrettyPrint.Annotated(Doc, (<+>), (<>), text, hsep)
 
 data Kind = Star
@@ -57,6 +59,9 @@ data UnitType = UnitType
 instance Kinded UnitType where
   kind _ = Star
 
+instance CanHaveFreeVars UnitType where
+  freeVariables _ = []
+
 ppUnitType :: UnitType -> Doc a
 ppUnitType _ = text "()"
 
@@ -79,6 +84,9 @@ instance MkPrimType PrimitiveType where
 
 instance MkPrimType Type where
   mkPrimType l n = TypePrim (PrimitiveType l n)
+
+instance CanHaveFreeVars PrimitiveType where
+  freeVariables _ = []
 
 ppPrimitiveType :: PrimitiveType -> Doc a
 ppPrimitiveType pt = text "llvm:" <> ppName (_ptName pt)
@@ -107,6 +115,9 @@ instance MkTypeRef ReferenceType where
 instance MkTypeRef Type where
   mkTypeRef l k n = TypeRef (ReferenceType l k n)
 
+instance CanHaveFreeVars ReferenceType where
+  freeVariables r = [_rtName r]
+
 -- -----------------------------------------------------------------------------
 
 data FunctionType = FunctionType
@@ -134,6 +145,11 @@ ppFunctionType ft =
 instance Kinded FunctionType where
   kind = _ftKind
 
+instance CanHaveFreeVars FunctionType where
+  freeVariables ft = foldl' (\ acc x -> acc `union` freeVariables x)
+                            (freeVariables (_ftResultType ft))
+                            (_ftArgumentTypes ft)
+
 -- -----------------------------------------------------------------------------
 
 data TypeApplication = TypeApplication
@@ -160,6 +176,10 @@ ppTypeApplication :: TypeApplication -> Doc a
 ppTypeApplication ta =
   ppType (_taLeftType ta) <+> ppType (_taRightType ta)
 
+instance CanHaveFreeVars TypeApplication where
+  freeVariables ta = freeVariables (_taLeftType  ta) `union`
+                     freeVariables (_taRightType ta)
+
 -- -----------------------------------------------------------------------------
 
 data Type = TypeUnit UnitType
@@ -182,6 +202,13 @@ instance Kinded Type where
   kind (TypeRef  x) = kind x
   kind (TypeFun  x) = kind x
   kind (TypeApp  x) = kind x
+
+instance CanHaveFreeVars Type where
+  freeVariables (TypeUnit t) = freeVariables t
+  freeVariables (TypePrim t) = freeVariables t
+  freeVariables (TypeRef  t) = freeVariables t
+  freeVariables (TypeFun  t) = freeVariables t
+  freeVariables (TypeApp  t) = freeVariables t
 
 makeLenses ''PrimitiveType
 makeLenses ''ReferenceType

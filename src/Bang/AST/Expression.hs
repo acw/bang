@@ -28,6 +28,7 @@ module Bang.AST.Expression
 
 import Bang.Syntax.Location(Location)
 import Bang.AST.Name(Name, ppName)
+import Bang.Utils.FreeVars(CanHaveFreeVars(..))
 import Bang.Utils.Pretty(text')
 import Control.Lens.TH(makeLenses)
 import Data.Text.Lazy(Text)
@@ -68,6 +69,9 @@ instance MkConstExp ConstantExpression where
 instance MkConstExp Expression where
   mkConstExp l v = ConstExp (mkConstExp l v)
 
+instance CanHaveFreeVars ConstantExpression where
+  freeVariables _ = []
+
 ppConstantExpression :: ConstantExpression -> Doc a
 ppConstantExpression = ppConstantValue . _constValue
 
@@ -90,6 +94,9 @@ instance MkRefExp ReferenceExpression where
 
 instance MkRefExp Expression where
   mkRefExp l n = RefExp (ReferenceExpression l n)
+
+instance CanHaveFreeVars ReferenceExpression where
+  freeVariables r = [_refName r]
 
 -- -----------------------------------------------------------------------------
 
@@ -114,12 +121,21 @@ instance MkLambdaExp LambdaExpression where
 instance MkLambdaExp Expression where
   mkLambdaExp l a b = LambdaExp (LambdaExpression l a b)
 
+instance CanHaveFreeVars LambdaExpression where
+  freeVariables l = filter (\ x -> not (x `elem` (_lambdaArgumentNames l)))
+                           (freeVariables (_lambdaBody l))
+
 -- -----------------------------------------------------------------------------
 
 data Expression = ConstExp  ConstantExpression
                 | RefExp    ReferenceExpression
                 | LambdaExp LambdaExpression
  deriving (Show)
+
+instance CanHaveFreeVars Expression where
+  freeVariables (ConstExp  e) = freeVariables e
+  freeVariables (RefExp    e) = freeVariables e
+  freeVariables (LambdaExp e) = freeVariables e
 
 ppExpression :: Expression -> Doc a
 ppExpression (ConstExp  e) = ppConstantExpression  e
