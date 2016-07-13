@@ -3,8 +3,12 @@
 module Bang.TypeInfer(runTypeInference)
  where
 
-runTypeInference :: a
-runTypeInference = undefined
+import Bang.AST(Module)
+import Bang.Monad(Compiler)
+import Bang.Syntax.ParserMonad(NameDatabase)
+
+runTypeInference :: NameDatabase -> Module -> Compiler ps Module
+runTypeInference _ x = return x
 
 {- Better version 
 import           Bang.Monad(Compiler, BangError(..), err,

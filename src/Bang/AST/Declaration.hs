@@ -31,7 +31,7 @@ import Bang.Utils.Pretty(text')
 import Data.Text.Lazy(Text)
 import Control.Lens(Lens', view, set, lens)
 import Control.Lens(makeLenses)
-import Text.PrettyPrint.Annotated(Doc, text, (<+>))
+import Text.PrettyPrint.Annotated(Doc, text, (<+>), ($+$), empty)
 
 data TypeDeclaration = TypeDeclaration
      { _tdName     :: Name
@@ -69,8 +69,13 @@ class MkValueDecl a where
   mkValueDecl :: Name -> Location -> Expression -> a
 
 ppValueDeclaration :: ValueDeclaration -> Doc a
-ppValueDeclaration vd =
-  ppName (_vdName vd) <+> text "=" <+> ppExpression (_vdValue vd)
+ppValueDeclaration vd = typedecl $+$ valuedecl
+ where
+  typedecl
+    | Just dt <- _vdDeclaredType vd =
+        ppTypeDeclaration (TypeDeclaration (_vdName vd) (_vdLocation vd) dt)
+    | otherwise = empty
+  valuedecl = ppName (_vdName vd) <+> text "=" <+> ppExpression (_vdValue vd)
 
 instance MkValueDecl ValueDeclaration where
   mkValueDecl n l e = ValueDeclaration n l [] [] Nothing e
