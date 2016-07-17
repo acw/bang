@@ -5,11 +5,12 @@ module Bang.Syntax.PostProcess(
 
 import           Bang.AST(Name, Module, moduleDeclarations, ppName)
 import           Bang.AST.Declaration(Declaration(..), declName,
-                                      TypeDeclaration, ValueDeclaration,
-                                      tdName, tdLocation, tdType,
+                                      ValueDeclaration,
                                       vdName, vdLocation, vdDeclaredType,
                                       vdFreeTypeVariables,
                                       vdValue, vdFreeValueVariables)
+import           Bang.AST.Expression(isEmptyExpression)
+import           Bang.AST.Type(Type)
 import           Bang.Monad(Compiler, BangError(..), err)
 import           Bang.Syntax.Location(Location, ppLocation)
 import           Bang.Utils.FreeVars(CanHaveFreeVars(..))
@@ -48,7 +49,7 @@ runPostProcessor mdl =
 
 -- -----------------------------------------------------------------------------
 
-type DeclarationTable = Map Name (Maybe TypeDeclaration, Maybe ValueDeclaration)
+type DeclarationTable = Map Name (Maybe (Type, Location), Maybe ValueDeclaration)
 
 makeDeclarationTable :: Module -> Compiler ps DeclarationTable
 makeDeclarationTable m = foldM combine Map.empty (view moduleDeclarations m)
@@ -56,16 +57,23 @@ makeDeclarationTable m = foldM combine Map.empty (view moduleDeclarations m)
   combine table d =
     do let name = view declName d
        case d of
-         DeclType td ->
-           case Map.lookup name table of
-             Nothing            ->
-               return (Map.insert name (Just td, Nothing) table)
-             Just (Nothing, vd) ->
-               return (Map.insert name (Just td, vd) table)
-             Just (Just td', _) ->
-               do let newLoc  = view tdLocation td
-                      origLoc = view tdLocation td'
-                  err (RedefinitionError name newLoc origLoc)
+         DeclType _ ->
+           return table
+         DeclVal vd | Just t <- view vdDeclaredType vd,
+                      isEmptyExpression (view vdValue vd) ->
+           do let myLoc = view vdLocation vd
+                  myVal = Just (t, myLoc)
+              case Map.lookup name table of
+                Nothing            ->
+                  return (Map.insert name (myVal, Nothing) table)
+                Just (Nothing, vd') ->
+                  return (Map.insert name (myVal, vd') table)
+                Just (Just (_, theirLoc), _) ->
+                  err (RedefinitionError name myLoc theirLoc)
+         DeclVal vd | Just _ <- view vdDeclaredType vd ->
+           err (InternalError name)
+         DeclVal vd | isEmptyExpression (view vdValue vd) ->
+           err (InternalError name)
          DeclVal vd ->
            case Map.lookup name table of
              Nothing            ->
@@ -76,8 +84,6 @@ makeDeclarationTable m = foldM combine Map.empty (view moduleDeclarations m)
                do let newLoc  = view vdLocation vd
                       origLoc = view vdLocation vd'
                   err (RedefinitionError name newLoc origLoc)
-         DeclPrim _ ->
-           return table
 
 -- -----------------------------------------------------------------------------
 
@@ -90,21 +96,19 @@ combineTypeValueDeclarations table m =
   process [] = return []
   process (x:rest) =
     case x of
-      DeclPrim _  -> (x:) `fmap` process rest
-      DeclType td ->
-        case Map.lookup (view tdName td) table of
-          Just (_, Nothing) ->
-            err (TypeDeclWithoutValue (view tdName td) (view tdLocation td))
-          _ ->
-            process rest
+      DeclType _ ->
+        (x:) `fmap` process rest
+      DeclVal vd | Just _ <- view vdDeclaredType vd,
+                   isEmptyExpression (view vdValue vd) ->
+        process rest
       DeclVal vd ->
         case Map.lookup (view vdName vd) table of
           Nothing ->
             err (InternalError (view vdName vd))
           Just (Nothing, _) ->
             (x:) `fmap` process rest
-          Just (Just td, _) ->
-            do let vd' = set vdDeclaredType (Just (view tdType td)) vd
+          Just (Just (t, _), _) ->
+            do let vd' = set vdDeclaredType (Just t) vd
                (DeclVal vd' :) `fmap` process rest
 
 -- -----------------------------------------------------------------------------

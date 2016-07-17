@@ -12,6 +12,7 @@ module Bang.Syntax.Location(
        , Located(..)
        , locatedAt
        , unknownLocation
+       , fakeLocation
        )
  where
 
@@ -53,6 +54,7 @@ advanceWith' pos txt =
     Just (c, rest) -> advanceWith' (pos `advanceWith` c) rest
 
 data Origin = Unknown
+            | Generated
             | Interactive
             | File FilePath
  deriving (Eq, Show)
@@ -61,6 +63,7 @@ ppOrigin :: Origin -> BangDoc
 ppOrigin x =
   case x of
     Unknown     -> text "<unknown>"
+    Generated   -> text "<generated>"
     Interactive -> text "<interactive>"
     File f      -> text f
 
@@ -97,3 +100,6 @@ locatedAt a p = Located p a
 
 unknownLocation :: Location
 unknownLocation = Location Unknown initialPosition initialPosition
+
+fakeLocation :: Location
+fakeLocation = Location Generated initialPosition initialPosition

@@ -23,13 +23,17 @@ module Bang.AST.Expression
        , lambdaLocation
        , lambdaArgumentNames
        , lambdaBody
+       -- * Empty Expressions
+       , emptyExpression
+       , isEmptyExpression
        )
  where
 
-import Bang.Syntax.Location(Location)
-import Bang.AST.Name(Name, ppName)
+import Bang.Syntax.Location(Location, fakeLocation)
+import Bang.AST.Name(Name, ppName, nothingName)
 import Bang.Utils.FreeVars(CanHaveFreeVars(..))
 import Bang.Utils.Pretty(text')
+import Control.Lens(view)
 import Control.Lens.TH(makeLenses)
 import Data.Text.Lazy(Text)
 import Text.PrettyPrint.Annotated(Doc, text, hsep, (<>), (<+>))
@@ -145,4 +149,14 @@ ppExpression (LambdaExp e) = ppLambdaExpression    e
 makeLenses ''ConstantExpression
 makeLenses ''ReferenceExpression
 makeLenses ''LambdaExpression
+
+emptyExpression :: Expression
+emptyExpression = mkRefExp fakeLocation nothingName
+
+isEmptyExpression :: Expression -> Bool
+isEmptyExpression (RefExp e) = view refLocation e == fakeLocation &&
+                               view refName     e == nothingName
+isEmptyExpression _          = False
+
+
 

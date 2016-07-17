@@ -34,8 +34,10 @@ module Bang.AST.Type
 import Bang.AST.Name(Name, ppName)
 import Bang.Syntax.Location(Location)
 import Bang.Utils.FreeVars(CanHaveFreeVars(..))
+import Bang.Utils.Pretty(text')
 import Control.Lens.TH(makeLenses)
 import Data.List(foldl', union)
+import Data.Text.Lazy(Text)
 import Text.PrettyPrint.Annotated(Doc, (<+>), (<>), text, hsep)
 
 data Kind = Star
@@ -69,12 +71,12 @@ ppUnitType _ = text "()"
 
 data PrimitiveType = PrimitiveType
      { _ptLocation :: Location
-     , _ptName     :: Name
+     , _ptName     :: Text
      }
  deriving (Show)
 
 class MkPrimType a where
-  mkPrimType :: Location -> Name -> a
+  mkPrimType :: Location -> Text -> a
 
 instance Kinded PrimitiveType where
   kind _ = Star
@@ -83,13 +85,13 @@ instance MkPrimType PrimitiveType where
   mkPrimType = PrimitiveType
 
 instance MkPrimType Type where
-  mkPrimType l n = TypePrim (PrimitiveType l n)
+  mkPrimType l t = TypePrim (PrimitiveType l t)
 
 instance CanHaveFreeVars PrimitiveType where
   freeVariables _ = []
 
 ppPrimitiveType :: PrimitiveType -> Doc a
-ppPrimitiveType pt = text "llvm:" <> ppName (_ptName pt)
+ppPrimitiveType pt = text "llvm:" <> text' (_ptName pt)
 
 -- -----------------------------------------------------------------------------
 

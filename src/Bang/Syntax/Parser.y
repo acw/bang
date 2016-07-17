@@ -11,10 +11,10 @@ module Bang.Syntax.Parser(
  where
 
 import Bang.Monad(err)
-import Bang.AST(Name, Module, NameEnvironment(..), mkModule)
-import Bang.AST.Declaration(Declaration, mkTypeDecl, mkPrimDecl, mkValueDecl)
+import Bang.AST(Name, Module, NameEnvironment(..), mkModule, emptyExpression)
+import Bang.AST.Declaration(Declaration, mkTypeDecl, mkValueDecl)
 import Bang.AST.Expression(ConstantValue(..), Expression, mkConstExp, mkRefExp, mkLambdaExp)
-import Bang.AST.Type(Type, Kind(..), mkTypeRef, mkFunType, mkTypeApp)
+import Bang.AST.Type(Type, Kind(..), mkTypeRef, mkFunType, mkTypeApp, mkPrimType)
 import Bang.Syntax.Location(Located(..), Origin, Position)
 import Bang.Syntax.ParserError(ParserError(..))
 import Bang.Syntax.ParserMonad(Parser, addFixities, registerName,
@@ -143,12 +143,12 @@ ValueDeclLHS :: { (Expression -> Declaration, [Name]) }
             err (InternalError $2 "ValDeclLHS")
          [Located src (ValIdent rawName)] ->
            do name <- registerName True src VarEnv rawName
-              return (mkValueDecl name src , [name])
+              return (mkValueDecl name src Nothing, [name])
          ((Located src (ValIdent rawName)) : args) ->
            do name <- registerName True src VarEnv rawName
               argNames <- forM args $ \ (Located asrc (ValIdent argName)) ->
                             registerName True asrc VarEnv argName
-              let builder = mkValueDecl name src . mkLambdaExp $2 argNames
+              let builder = mkValueDecl name src Nothing . mkLambdaExp $2 argNames
               return (builder, argNames)
     }
 
@@ -165,13 +165,18 @@ TypeDeclaration :: { Declaration }
     {%
        do let Located src (ValIdent rawName) = $1
           name <- registerName True src VarEnv rawName
-          return (mkTypeDecl name src $3) }
+          return (mkValueDecl name src (Just $3) emptyExpression) }
+  | 'type' TypeIdent '=' Type
+    {%
+       do let Located src (TypeIdent rawName) = $2
+          name <- registerName True src TypeEnv rawName
+          return (mkTypeDecl name src $4) }
   | 'primitive' 'type' TypeIdent '=' String
     {%
-       do let Located src (TypeIdent rawName) = $3
-              Located _   (StringTok rawText) = $5
-          name <- registerName False src TypeEnv rawName
-          return (mkPrimDecl name src rawText) }
+       do let Located nsrc (TypeIdent rawName) = $3
+              Located tsrc (StringTok rawText) = $5
+          name <- registerName False nsrc TypeEnv rawName
+          return (mkTypeDecl name $2 (mkPrimType tsrc rawText)) }
 
 -- -----------------------------------------------------------------------------
 

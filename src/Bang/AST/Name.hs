@@ -1,7 +1,9 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell   #-}
 module Bang.AST.Name(
          NameEnvironment(..)
        , Name
+       , nothingName
        , mkName
        , ppName
        , nameText
@@ -15,7 +17,7 @@ import Control.Lens(view)
 import Control.Lens.TH(makeLenses)
 import Data.Text.Lazy(Text, unpack)
 import Data.Word(Word)
-import Bang.Syntax.Location(Location)
+import Bang.Syntax.Location(Location, fakeLocation)
 import Bang.Utils.Pretty(text', word)
 import Text.PrettyPrint.Annotated(Doc, colon, (<>))
 
@@ -30,6 +32,9 @@ data Name = Name
      }
 
 makeLenses ''Name
+
+nothingName :: Name
+nothingName = Name ":<nothing>:" VarEnv fakeLocation 0
 
 mkName :: Text -> NameEnvironment -> Location -> Word -> Name
 mkName = Name

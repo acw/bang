@@ -15,24 +15,17 @@ module Bang.AST.Declaration
        , vdName, vdLocation
        , vdFreeTypeVariables, vdFreeValueVariables
        , vdDeclaredType, vdValue
-       -- * Declarations of primitive types
-       , PrimitiveDeclaration
-       , ppPrimitiveDeclaration
-       , mkPrimDecl
-       , pdName, pdLocation, pdLLVMType
        )
  where
 
 import Bang.AST.Expression(Expression, ppExpression)
 import Bang.AST.Name(Name, ppName)
-import Bang.AST.Type(Type, ppType)
+import Bang.AST.Type(Type(TypePrim), ppType)
 import Bang.Syntax.Location(Location)
-import Bang.Utils.Pretty(text')
-import Data.Text.Lazy(Text)
 import Control.Lens(Lens', view, set, lens)
 import Control.Lens(makeLenses)
-import Text.PrettyPrint.Annotated(Doc, text, (<+>), ($+$), empty)
-import Text.PrettyPrint.Annotated(braces, punctuate, comma, hsep)
+import Text.PrettyPrint.Annotated(Doc, text, (<+>), ($+$), (<>), empty)
+import Text.PrettyPrint.Annotated(braces, punctuate, comma, hsep, space)
 
 data TypeDeclaration = TypeDeclaration
      { _tdName     :: Name
@@ -45,8 +38,11 @@ class MkTypeDecl a where
   mkTypeDecl :: Name -> Location -> Type -> a
 
 ppTypeDeclaration :: TypeDeclaration -> Doc a
-ppTypeDeclaration td =
-  ppName (_tdName td) <+> text "::" <+> ppType (_tdType td)
+ppTypeDeclaration td = prefix <> text "type" <+> ppName (_tdName td) <+>
+                       text "=" <+> ppType (_tdType td)
+ where
+  prefix | TypePrim _ <- _tdType td = text "primitive" <> space
+         | otherwise                = empty
 
 instance MkTypeDecl TypeDeclaration where
   mkTypeDecl = TypeDeclaration
@@ -67,7 +63,7 @@ data ValueDeclaration = ValueDeclaration
  deriving (Show)
 
 class MkValueDecl a where
-  mkValueDecl :: Name -> Location -> Expression -> a
+  mkValueDecl :: Name -> Location -> Maybe Type -> Expression -> a
 
 ppValueDeclaration :: ValueDeclaration -> Doc a
 ppValueDeclaration vd = frees $+$ typedecl $+$ valuedecl
@@ -84,57 +80,29 @@ ppValueDeclaration vd = frees $+$ typedecl $+$ valuedecl
   valuedecl = ppName (_vdName vd) <+> text "=" <+> ppExpression (_vdValue vd)
 
 instance MkValueDecl ValueDeclaration where
-  mkValueDecl n l e = ValueDeclaration n l [] [] Nothing e
+  mkValueDecl n l mt e = ValueDeclaration n l [] [] mt e
 
 instance MkValueDecl Declaration where
-  mkValueDecl n l e = DeclVal (ValueDeclaration n l [] [] Nothing e)
-
--- -----------------------------------------------------------------------------
-
-data PrimitiveDeclaration = PrimitiveDeclaration
-     { _pdName     :: Name
-     , _pdLocation :: Location
-     , _pdLLVMType :: Text
-     }
- deriving (Show)
-
-class MkPrimDecl a where
-  mkPrimDecl :: Name -> Location -> Text -> a
-
-ppPrimitiveDeclaration :: PrimitiveDeclaration -> Doc a
-ppPrimitiveDeclaration pd =
-  text "primitive" <+> text "type" <+> ppName (_pdName pd) <+>
-  text "=" <+> text' (_pdLLVMType pd)
-
-instance MkPrimDecl PrimitiveDeclaration where
-  mkPrimDecl = PrimitiveDeclaration
-
-instance MkPrimDecl Declaration where
-  mkPrimDecl n l t = DeclPrim (PrimitiveDeclaration n l t)
+  mkValueDecl n l mt e = DeclVal (ValueDeclaration n l [] [] mt e)
 
 -- -----------------------------------------------------------------------------
 
 data Declaration = DeclType TypeDeclaration
                  | DeclVal  ValueDeclaration
-                 | DeclPrim PrimitiveDeclaration
  deriving (Show)
 
 ppDeclaration :: Declaration -> Doc a
 ppDeclaration (DeclType d) = ppTypeDeclaration d
 ppDeclaration (DeclVal  d) = ppValueDeclaration d
-ppDeclaration (DeclPrim d) = ppPrimitiveDeclaration d
 
 makeLenses ''TypeDeclaration
 makeLenses ''ValueDeclaration
-makeLenses ''PrimitiveDeclaration
 
 declName :: Lens' Declaration Name
 declName = lens getter setter
  where
   getter (DeclType d) = view tdName d
   getter (DeclVal  d) = view vdName d
-  getter (DeclPrim d) = view pdName d
   setter (DeclType d) x = DeclType (set tdName x d)
   setter (DeclVal  d) x = DeclVal  (set vdName x d)
-  setter (DeclPrim d) x = DeclPrim (set pdName x d)
 
