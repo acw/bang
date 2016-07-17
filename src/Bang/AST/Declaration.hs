@@ -74,8 +74,8 @@ ppValueDeclaration vd = frees $+$ typedecl $+$ valuedecl
     text "free value variables: " <+>
     braces (hsep (punctuate comma (map ppName (_vdFreeValueVariables vd))))
   typedecl
-    | Just dt <- _vdDeclaredType vd =
-        ppTypeDeclaration (TypeDeclaration (_vdName vd) (_vdLocation vd) dt)
+    | Just t <- _vdDeclaredType vd =
+        ppName (_vdName vd) <+> text "::" <+> ppType t
     | otherwise = empty
   valuedecl = ppName (_vdName vd) <+> text "=" <+> ppExpression (_vdValue vd)
 
