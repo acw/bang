@@ -13,7 +13,6 @@ module Bang.AST.Declaration
        , ppValueDeclaration
        , mkValueDecl
        , vdName, vdLocation
-       , vdFreeTypeVariables, vdFreeValueVariables
        , vdDeclaredType, vdValue
        )
  where
@@ -22,10 +21,11 @@ import Bang.AST.Expression(Expression, ppExpression)
 import Bang.AST.Name(Name, ppName)
 import Bang.AST.Type(Type(TypePrim), ppType)
 import Bang.Syntax.Location(Location)
+import Bang.Utils.FreeVars(CanHaveFreeVars(..))
 import Control.Lens(Lens', view, set, lens)
 import Control.Lens(makeLenses)
-import Text.PrettyPrint.Annotated(Doc, text, (<+>), ($+$), (<>), empty)
-import Text.PrettyPrint.Annotated(braces, punctuate, comma, hsep, space)
+import Data.List(delete, union)
+import Text.PrettyPrint.Annotated(Doc, text, (<+>), ($+$), (<>), empty, space)
 
 data TypeDeclaration = TypeDeclaration
      { _tdName     :: Name
@@ -50,13 +50,14 @@ instance MkTypeDecl TypeDeclaration where
 instance MkTypeDecl Declaration where
   mkTypeDecl n l t = DeclType (TypeDeclaration n l t)
 
+instance CanHaveFreeVars TypeDeclaration where
+  freeVariables td = delete (_tdName td) (freeVariables (_tdType td))
+
 -- -----------------------------------------------------------------------------
 
 data ValueDeclaration = ValueDeclaration
      { _vdName               :: Name
      , _vdLocation           :: Location
-     , _vdFreeTypeVariables  :: [Name]
-     , _vdFreeValueVariables :: [Name]
      , _vdDeclaredType       :: Maybe Type
      , _vdValue              :: Expression
      }
@@ -66,13 +67,8 @@ class MkValueDecl a where
   mkValueDecl :: Name -> Location -> Maybe Type -> Expression -> a
 
 ppValueDeclaration :: ValueDeclaration -> Doc a
-ppValueDeclaration vd = frees $+$ typedecl $+$ valuedecl
+ppValueDeclaration vd = typedecl $+$ valuedecl
  where
-  frees =
-    text "free type variables: " <+>
-    braces (hsep (punctuate comma (map ppName (_vdFreeTypeVariables vd)))) $+$
-    text "free value variables: " <+>
-    braces (hsep (punctuate comma (map ppName (_vdFreeValueVariables vd))))
   typedecl
     | Just t <- _vdDeclaredType vd =
         ppName (_vdName vd) <+> text "::" <+> ppType t
@@ -80,10 +76,16 @@ ppValueDeclaration vd = frees $+$ typedecl $+$ valuedecl
   valuedecl = ppName (_vdName vd) <+> text "=" <+> ppExpression (_vdValue vd)
 
 instance MkValueDecl ValueDeclaration where
-  mkValueDecl n l mt e = ValueDeclaration n l [] [] mt e
+  mkValueDecl n l mt e = ValueDeclaration n l mt e
 
 instance MkValueDecl Declaration where
-  mkValueDecl n l mt e = DeclVal (ValueDeclaration n l [] [] mt e)
+  mkValueDecl n l mt e = DeclVal (ValueDeclaration n l mt e)
+
+instance CanHaveFreeVars ValueDeclaration where
+  freeVariables vd = delete (_vdName vd) (union valTypes typeTypes)
+   where
+    valTypes  = freeVariables (_vdValue vd)
+    typeTypes = freeVariables (_vdDeclaredType vd)
 
 -- -----------------------------------------------------------------------------
 
@@ -94,6 +96,10 @@ data Declaration = DeclType TypeDeclaration
 ppDeclaration :: Declaration -> Doc a
 ppDeclaration (DeclType d) = ppTypeDeclaration d
 ppDeclaration (DeclVal  d) = ppValueDeclaration d
+
+instance CanHaveFreeVars Declaration where
+  freeVariables (DeclType td) = freeVariables td
+  freeVariables (DeclVal  vd) = freeVariables vd
 
 makeLenses ''TypeDeclaration
 makeLenses ''ValueDeclaration

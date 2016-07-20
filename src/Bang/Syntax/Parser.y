@@ -120,7 +120,7 @@ top_module :: { Module }
     {%
        do let Located src (TypeIdent rawName) = $2
           name <- registerName False src ModuleEnv rawName
-          return (mkModule name $3) }
+          return (mkModule name [$3]) }
 
 Declaration :: { Maybe Declaration }
   : ValueDeclaration  { Just $1 }

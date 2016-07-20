@@ -7,16 +7,17 @@ import           Bang.AST(Name, Module, moduleDeclarations, ppName)
 import           Bang.AST.Declaration(Declaration(..), declName,
                                       ValueDeclaration,
                                       vdName, vdLocation, vdDeclaredType,
-                                      vdFreeTypeVariables,
-                                      vdValue, vdFreeValueVariables)
+                                      vdValue)
 import           Bang.AST.Expression(isEmptyExpression)
 import           Bang.AST.Type(Type)
 import           Bang.Monad(Compiler, BangError(..), err)
 import           Bang.Syntax.Location(Location, ppLocation)
 import           Bang.Utils.FreeVars(CanHaveFreeVars(..))
 import           Bang.Utils.Pretty(BangDoc)
-import           Control.Lens(view, set, over)
+import           Control.Lens(view, set)
 import           Control.Monad(foldM)
+import           Data.Graph(SCC(..))
+import           Data.Graph.SCC(stronglyConnComp)
 import           Data.Map.Strict(Map)
 import qualified Data.Map.Strict as Map
 import           Text.PrettyPrint.Annotated(text, ($+$), (<+>), nest)
@@ -43,16 +44,17 @@ prettyError e =
 
 runPostProcessor :: Module -> Compiler ps Module
 runPostProcessor mdl =
-  do declTable <- makeDeclarationTable mdl
-     mdl' <- combineTypeValueDeclarations declTable mdl
-     return (addFreeVarsToDecls mdl')
+  do let decls = concat (view moduleDeclarations mdl)
+     declTable <- makeDeclarationTable decls
+     decls' <- combineTypeValueDeclarations declTable decls
+     return (set moduleDeclarations (orderDecls decls') mdl)
 
 -- -----------------------------------------------------------------------------
 
 type DeclarationTable = Map Name (Maybe (Type, Location), Maybe ValueDeclaration)
 
-makeDeclarationTable :: Module -> Compiler ps DeclarationTable
-makeDeclarationTable m = foldM combine Map.empty (view moduleDeclarations m)
+makeDeclarationTable :: [Declaration] -> Compiler ps DeclarationTable
+makeDeclarationTable decls = foldM combine Map.empty decls
  where
   combine table d =
     do let name = view declName d
@@ -87,11 +89,10 @@ makeDeclarationTable m = foldM combine Map.empty (view moduleDeclarations m)
 
 -- -----------------------------------------------------------------------------
 
-combineTypeValueDeclarations :: DeclarationTable -> Module -> Compiler ps Module
-combineTypeValueDeclarations table m =
-  do let decls = view moduleDeclarations m
-     decls' <- process decls
-     return (set moduleDeclarations decls' m)
+combineTypeValueDeclarations :: DeclarationTable ->
+                                [Declaration] ->
+                                Compiler ps [Declaration]
+combineTypeValueDeclarations table decls = process decls
  where
   process [] = return []
   process (x:rest) =
@@ -113,14 +114,11 @@ combineTypeValueDeclarations table m =
 
 -- -----------------------------------------------------------------------------
 
-addFreeVarsToDecls :: Module -> Module
-addFreeVarsToDecls = over moduleDeclarations (map process)
+orderDecls :: [Declaration] -> [[Declaration]]
+orderDecls decls = map unSCC (stronglyConnComp nodes)
  where
-  process (DeclVal vd) =
-    let dtype = view vdDeclaredType vd
-        dval  = view vdValue        vd
-    in DeclVal (set vdFreeTypeVariables  (freeVariables dtype) $
-                set vdFreeValueVariables (freeVariables dval)  vd)
-  process x = x
-
-
+  unSCC (AcyclicSCC x) = [x]
+  unSCC (CyclicSCC xs) = xs
+  --
+  nodes = map tuplify decls
+  tuplify d = (d, view declName d, freeVariables d)

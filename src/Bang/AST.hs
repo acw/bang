@@ -21,10 +21,10 @@ import Text.PrettyPrint.Annotated(Doc, empty, text, (<+>), ($+$))
 
 data Module = Module {
        _moduleName         :: Name
-     , _moduleDeclarations :: [Declaration]
+     , _moduleDeclarations :: [[Declaration]]
      }
 
-mkModule :: Name -> [Declaration] -> Module
+mkModule :: Name -> [[Declaration]] -> Module
 mkModule = Module
 
 makeLenses ''Module
@@ -34,9 +34,10 @@ ppModule m = text "module" <+> ppName (view moduleName m) $+$
              dump (view moduleName m) (view moduleDeclarations m)
  where
   dump _    [] = empty
-  dump prev (x:rest)
+  dump prev ([]:rest) = dump prev rest
+  dump prev ((x:rest):lr)
     | prev == view declName x =
-         ppDeclaration x $+$ dump prev rest
+         ppDeclaration x $+$ dump prev (rest:lr)
     | otherwise = 
-         text "" $+$ dump (view declName x) (x:rest)
+         text "" $+$ dump (view declName x) ((x:rest):lr)
 

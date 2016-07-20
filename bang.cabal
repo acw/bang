@@ -19,6 +19,7 @@ executable bang
                        base                 >= 4.7      && < 5.0,
                        bytestring           >= 0.10.6   && < 0.13,
                        containers           >= 0.5.4    && < 0.8,
+                       GraphSCC             >= 1.0.4    && < 1.4,
                        lens                 >= 4.14     && < 4.16,
                        llvm-pretty          >= 0.4.0.1  && < 0.8,
                        optparse-applicative >= 0.12.1.0 && < 0.15,
