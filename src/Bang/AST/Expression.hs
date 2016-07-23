@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Bang.AST.Expression
-       ( Expression
+       ( Expression(..)
        , ppExpression
        -- * Constant Expressions
        , ConstantExpression

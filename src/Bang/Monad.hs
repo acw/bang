@@ -10,13 +10,13 @@ module Bang.Monad(
        , runCompiler
        , runPass
        , getPassState, setPassState, overPassState, viewPassState
-       , registerNewName, genName, genTypeRef, genVarRef
-       , warn, err
+       , registerName, registerNewName, genName, genTypeRef, genVarRef
+       , warn, err, err'
        )
  where
 
 import           Bang.AST.Expression(Expression, mkRefExp)
-import           Bang.AST.Name(NameEnvironment(..), Name, mkName)
+import           Bang.AST.Name(NameEnvironment(..), Name, mkName, nameIndex)
 import           Bang.AST.Type(Kind(..), Type, mkTypeRef)
 import           Bang.CommandLine(BangCommand, CommandsWithInputFile(..))
 import           Bang.Error(exit)
@@ -26,7 +26,7 @@ import           Bang.Utils.Pretty(BangDoc)
 import           Control.Exception(tryJust)
 import           Control.Lens(Lens', over, set, view)
 import           Control.Lens.TH(makeLenses)
-import           Control.Monad(guard)
+import           Control.Monad(guard, when)
 import           Data.Text.Lazy(Text, pack)
 import qualified Data.Text.Lazy.IO as T
 import           System.Exit(ExitCode(..), exitWith)
@@ -107,6 +107,12 @@ viewPassState l = Compiler (\ st -> return (st, view (csPassState . l) st))
 
 -- -----------------------------------------------------------------------------
 
+registerName :: Name -> Compiler s Name
+registerName name =
+  Compiler (\ st ->
+             do let current = view csNextIdent st
+                return (over csNextIdent (+1) st, set nameIndex current name))
+
 registerNewName :: NameEnvironment -> Text -> Compiler s Name
 registerNewName env name =
   Compiler (\ st ->
@@ -141,19 +147,22 @@ instance BangWarning w => BangError (WErrorWarning w) where
 warn :: BangWarning w => w -> Compiler s ()
 warn w = Compiler (\ st ->
                      if view csPromoteWarnings st
-                        then runError (WErrorWarning w)
+                        then runError (WErrorWarning w) False >> return (st, ())
                         else runWarning w >> return (st, ()))
 
 err :: BangError w => w -> Compiler s a
-err w = Compiler (\ _ -> runError w)
+err w = Compiler (\ _ -> runError w True >> undefined)
+
+err' :: BangError e => e -> Compiler s ()
+err' e = Compiler (\ st -> runError e False >> return (st, ()))
 
 runWarning :: BangWarning w => w -> IO ()
 runWarning = undefined
 
-runError :: BangError w => w -> IO a
-runError e =
+runError :: BangError w => w -> Bool -> IO ()
+runError e die =
   do putStrLn (go (ppError e))
-     exitWith (ExitFailure 1)
+     when die $ exitWith (ExitFailure 1)
  where
    go (Nothing, doc) = render doc
    go (Just a, doc) = render (ppLocation a $+$ nest 3 doc)

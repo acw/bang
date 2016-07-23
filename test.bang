@@ -8,3 +8,6 @@ one = 1
 
 id :: a -> a
 id x = x
+
+seq :: a -> a -> a
+seq x y = y

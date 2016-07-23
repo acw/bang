@@ -5,16 +5,12 @@ module Bang.Syntax.ParserMonad(
        , NameDatabase
        , runParser
        , addFixities
-       , registerName
-       , unregisterNames
-       , lookupName
        , parseError
        , runNextToken
        )
  where
 
-import           Bang.AST.Name(Name, NameEnvironment(..), mkName,
-                               nameLocation, nameText)
+import           Bang.AST.Name(Name, NameEnvironment(..))
 import           Bang.Monad(Compiler, err, runPass,
                             getPassState, overPassState, viewPassState)
 import           Bang.Syntax.Lexer(AlexReturn(..), AlexInput(..), alexScan)
@@ -37,7 +33,6 @@ type NameDatabase = Map (NameEnvironment, Text) Name
 data ParserState = ParserState {
        _psPrecTable    :: Map Text Fixity
      , _psNameDatabase :: Map (NameEnvironment, Text) Name
-     , _psNextIdent    :: Word
      , _psOrigin       :: Origin
      , _psLexerState   :: AlexInput
      }
@@ -51,7 +46,7 @@ runParser origin stream action =
   over _1 (view psNameDatabase) `fmap` runPass pstate action
  where
   initInput = AlexInput initialPosition stream
-  pstate    = ParserState Map.empty Map.empty 1 origin initInput
+  pstate    = ParserState Map.empty Map.empty origin initInput
 
 -- -----------------------------------------------------------------------------
 
@@ -99,38 +94,6 @@ addFixities src fixityBuilder lval names =
 
 getFixities :: Parser (Map Text Fixity)
 getFixities = viewPassState psPrecTable
-
--- -----------------------------------------------------------------------------
-
-registerName :: Bool -> Location -> NameEnvironment -> Text -> Parser Name
-registerName redefOk loc env name =
-  do state <- getPassState
-     let key = (env, name)
-     case Map.lookup key (view psNameDatabase state) of
-       Nothing ->
-         do let res = mkName name env loc (view psNextIdent state)
-            overPassState (over psNameDatabase (Map.insert key res) .
-                           over psNextIdent (+1))
-            return res
-       Just res | redefOk ->
-         return res
-       Just name' ->
-         err (RedefinitionError loc (view nameLocation name') name)
-
-unregisterNames :: NameEnvironment -> [Name] -> Parser ()
-unregisterNames env names =
-  do db <- viewPassState psNameDatabase
-     let db' = foldr (\ n m -> Map.delete (env, view nameText n) m) db names
-     overPassState (set psNameDatabase db')
-
-lookupName :: Location -> NameEnvironment -> Text -> Parser Name
-lookupName loc env name =
-  do state <- getPassState
-     case Map.lookup (env, name) (view psNameDatabase state) of
-       Nothing ->
-         err (UnboundVariable loc name)
-       Just realName ->
-         return realName
 
 -- -----------------------------------------------------------------------------
 
