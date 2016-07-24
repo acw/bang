@@ -9,7 +9,7 @@ module Bang.Monad(
        , BangWarning(..)
        , runCompiler
        , runPass
-       , getPassState, setPassState, overPassState, viewPassState
+       , getPassState, setPassState, mapPassState, overPassState, viewPassState
        , registerName, registerNewName, genName, genTypeRef, genVarRef
        , warn, err, err'
        )
@@ -96,11 +96,16 @@ runPass s2 action =
 getPassState :: Compiler s s
 getPassState = Compiler (\ st -> return (st, view csPassState st))
 
-setPassState :: s -> Compiler s ()
-setPassState ps' = Compiler (\ st -> return (set csPassState ps' st, ()))
+setPassState :: Lens' s b -> b -> Compiler s ()
+setPassState passLens v =
+  Compiler (\ st -> return (set (csPassState . passLens) v st, ()))
 
-overPassState :: (s -> s) -> Compiler s ()
-overPassState f = Compiler (\ st -> return (over csPassState f st, ()))
+mapPassState :: (s -> s) -> Compiler s ()
+mapPassState f = Compiler (\ st -> return (over csPassState f st, ()))
+
+overPassState :: Lens' s b -> (b -> b) -> Compiler s ()
+overPassState passLens f =
+  Compiler (\ st -> return (over (csPassState . passLens) f st, ()))
 
 viewPassState :: Lens' s b -> Compiler s b
 viewPassState l = Compiler (\ st -> return (st, view (csPassState . l) st))

@@ -2,7 +2,6 @@
 {-# LANGUAGE TemplateHaskell   #-}
 module Bang.Syntax.ParserMonad(
          Parser
-       , NameDatabase
        , runParser
        , addFixities
        , parseError
@@ -10,16 +9,14 @@ module Bang.Syntax.ParserMonad(
        )
  where
 
-import           Bang.AST.Name(Name, NameEnvironment(..))
 import           Bang.Monad(Compiler, err, runPass,
-                            getPassState, overPassState, viewPassState)
+                            setPassState, overPassState, viewPassState)
 import           Bang.Syntax.Lexer(AlexReturn(..), AlexInput(..), alexScan)
 import           Bang.Syntax.Location(Location(..), Located(..),
                                       Origin(..), initialPosition,
                                       advanceWith', locatedAt)
 import           Bang.Syntax.ParserError(ParserError(..))
 import           Bang.Syntax.Token(Token(..), Fixity)
-import           Control.Lens(view, set, over, _1)
 import           Control.Lens.TH(makeLenses)
 import           Control.Monad(forM_)
 import           Data.Char(digitToInt, isSpace)
@@ -28,11 +25,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Text.Lazy(Text)
 import qualified Data.Text.Lazy as T
 
-type NameDatabase = Map (NameEnvironment, Text) Name
-
 data ParserState = ParserState {
        _psPrecTable    :: Map Text Fixity
-     , _psNameDatabase :: Map (NameEnvironment, Text) Name
      , _psOrigin       :: Origin
      , _psLexerState   :: AlexInput
      }
@@ -41,12 +35,11 @@ makeLenses ''ParserState
 
 type Parser a = Compiler ParserState a
 
-runParser :: Origin -> Text -> Parser a -> Compiler ps (NameDatabase,  a)
-runParser origin stream action =
-  over _1 (view psNameDatabase) `fmap` runPass pstate action
+runParser :: Origin -> Text -> Parser a -> Compiler ps a
+runParser origin stream action = snd `fmap` runPass pstate action
  where
   initInput = AlexInput initialPosition stream
-  pstate    = ParserState Map.empty Map.empty origin initInput
+  pstate    = ParserState Map.empty origin initInput
 
 -- -----------------------------------------------------------------------------
 
@@ -57,9 +50,7 @@ addFixities src fixityBuilder lval names =
   do value <- processInteger lval
      let fixity = fixityBuilder value
      forM_ names $ \ tok ->
-       do state <- getPassState
-          name <- forceNameDefined VarEnv src tok state
-          overPassState (over psPrecTable (Map.insert name fixity))
+       overPassState psPrecTable (Map.insert (tokenName tok) fixity)
  where
   processInteger x =
     case x of
@@ -85,12 +76,6 @@ addFixities src fixityBuilder lval names =
       Located _ (OpIdent   _ x) -> x
       _                       ->
         error "Internal error (tokenName in Parser.y)"
-  --
-  forceNameDefined env loc token state =
-    do let name = tokenName token
-       case Map.lookup (env, name) (view psNameDatabase state) of
-         Just _  -> return name
-         Nothing -> err (UnboundVariable loc name)
 
 getFixities :: Parser (Map Text Fixity)
 getFixities = viewPassState psPrecTable
@@ -130,7 +115,7 @@ getLexerState :: Parser AlexInput
 getLexerState = viewPassState psLexerState
 
 setLexerState :: AlexInput -> Parser ()
-setLexerState lst = overPassState (set psLexerState lst)
+setLexerState = setPassState psLexerState
 
 -- -----------------------------------------------------------------------------
 

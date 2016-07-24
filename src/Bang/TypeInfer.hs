@@ -5,10 +5,9 @@ module Bang.TypeInfer(runTypeInference)
 
 import Bang.AST(Module)
 import Bang.Monad(Compiler)
-import Bang.Syntax.ParserMonad(NameDatabase)
 
-runTypeInference :: NameDatabase -> Module -> Compiler ps Module
-runTypeInference _ x = return x
+runTypeInference :: Module -> Compiler ps Module
+runTypeInference x = return x
 
 {- Better version 
 import           Bang.Monad(Compiler, BangError(..), err,

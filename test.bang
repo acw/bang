@@ -9,5 +9,5 @@ one = 1
 id :: a -> a
 id x = x
 
-seq :: a -> a -> a
+seq :: a -> b -> b
 seq x y = y

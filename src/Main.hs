@@ -11,12 +11,12 @@ import           Text.PrettyPrint.Annotated(render)
 main :: IO ()
 main = getCommand >>= \ cmd ->
   case cmd of
-    Parse     o -> do (_, mdl) <- runCompiler cmd o (\ r t -> runParser r t parseModule)
+    Parse     o -> do mdl <- runCompiler cmd o (\ r t -> runParser r t parseModule)
                       putStrLn (render (ppModule mdl))
     TypeCheck o -> do mdl <- runCompiler cmd o (\ r t ->
-                                                 do (ndb, mdl) <- runParser r t parseModule
+                                                 do mdl  <- runParser r t parseModule
                                                     mdl' <- runPostProcessor mdl
-                                                    runTypeInference ndb mdl')
+                                                    runTypeInference mdl')
                       putStrLn (render (ppModule mdl))
     Help        -> putStrLn helpString
     Version     -> putStrLn ("Bang tool, version " ++ showVersion version)
