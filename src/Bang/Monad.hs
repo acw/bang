@@ -162,7 +162,10 @@ err' :: BangError e => e -> Compiler s ()
 err' e = Compiler (\ st -> runError e False >> return (st, ()))
 
 runWarning :: BangWarning w => w -> IO ()
-runWarning = undefined
+runWarning w = putStrLn (go (ppWarning w))
+ where
+   go (Nothing, doc) = render doc
+   go (Just a, doc) = render (ppLocation a $+$ nest 3 doc)
 
 runError :: BangError w => w -> Bool -> IO ()
 runError e die =

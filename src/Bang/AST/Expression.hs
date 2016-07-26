@@ -35,6 +35,7 @@ import Bang.Utils.FreeVars(CanHaveFreeVars(..))
 import Bang.Utils.Pretty(text')
 import Control.Lens(view)
 import Control.Lens.TH(makeLenses)
+import Data.Set(empty, singleton, fromList, (\\))
 import Data.Text.Lazy(Text)
 import Text.PrettyPrint.Annotated(Doc, text, hsep, (<>), (<+>))
 
@@ -74,7 +75,7 @@ instance MkConstExp Expression where
   mkConstExp l v = ConstExp (mkConstExp l v)
 
 instance CanHaveFreeVars ConstantExpression where
-  freeVariables _ = []
+  freeVariables _ = empty
 
 ppConstantExpression :: ConstantExpression -> Doc a
 ppConstantExpression = ppConstantValue . _constValue
@@ -100,7 +101,7 @@ instance MkRefExp Expression where
   mkRefExp l n = RefExp (ReferenceExpression l n)
 
 instance CanHaveFreeVars ReferenceExpression where
-  freeVariables r = [_refName r]
+  freeVariables r = singleton (_refName r)
 
 -- -----------------------------------------------------------------------------
 
@@ -126,8 +127,8 @@ instance MkLambdaExp Expression where
   mkLambdaExp l a b = LambdaExp (LambdaExpression l a b)
 
 instance CanHaveFreeVars LambdaExpression where
-  freeVariables l = filter (\ x -> not (x `elem` (_lambdaArgumentNames l)))
-                           (freeVariables (_lambdaBody l))
+  freeVariables l = freeVariables (_lambdaBody l) \\
+                    fromList (_lambdaArgumentNames l)
 
 -- -----------------------------------------------------------------------------
 

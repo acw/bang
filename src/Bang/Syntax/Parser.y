@@ -174,8 +174,8 @@ Type :: { Type }
   : RawType                      { $1 }
 
 RawType :: { Type }
-  : RawType '->' BaseType        { mkFunType $2 [$1] $3 }
-  | BaseType                     { $1                   }
+  : RawType '->' BaseType        { mkFunType $2 $1 $3 }
+  | BaseType                     { $1                 }
 
 BaseType :: { Type }
   : TypeIdent   {%

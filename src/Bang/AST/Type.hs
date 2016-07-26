@@ -22,7 +22,7 @@ module Bang.AST.Type
        , FunctionType
        , ppFunctionType
        , mkFunType
-       , ftLocation, ftKind, ftArgumentTypes, ftResultType
+       , ftLocation, ftKind, ftArgumentType, ftResultType
          -- * type application
        , TypeApplication
        , ppTypeApplication
@@ -36,9 +36,9 @@ import Bang.Syntax.Location(Location)
 import Bang.Utils.FreeVars(CanHaveFreeVars(..))
 import Bang.Utils.Pretty(text')
 import Control.Lens.TH(makeLenses)
-import Data.List(foldl', union)
+import Data.Set(union, empty, singleton)
 import Data.Text.Lazy(Text)
-import Text.PrettyPrint.Annotated(Doc, (<+>), (<>), text, hsep)
+import Text.PrettyPrint.Annotated(Doc, (<+>), (<>), text)
 
 data Kind = Star
           | Unknown
@@ -62,7 +62,7 @@ instance Kinded UnitType where
   kind _ = Star
 
 instance CanHaveFreeVars UnitType where
-  freeVariables _ = []
+  freeVariables _ = empty
 
 ppUnitType :: UnitType -> Doc a
 ppUnitType _ = text "()"
@@ -88,7 +88,7 @@ instance MkPrimType Type where
   mkPrimType l t = TypePrim (PrimitiveType l t)
 
 instance CanHaveFreeVars PrimitiveType where
-  freeVariables _ = []
+  freeVariables _ = empty
 
 ppPrimitiveType :: PrimitiveType -> Doc a
 ppPrimitiveType pt = text "llvm:" <> text' (_ptName pt)
@@ -118,20 +118,20 @@ instance MkTypeRef Type where
   mkTypeRef l k n = TypeRef (ReferenceType l k n)
 
 instance CanHaveFreeVars ReferenceType where
-  freeVariables r = [_rtName r]
+  freeVariables r = singleton (_rtName r)
 
 -- -----------------------------------------------------------------------------
 
 data FunctionType = FunctionType
-     { _ftLocation      :: Location
-     , _ftKind          :: Kind
-     , _ftArgumentTypes :: [Type]
-     , _ftResultType    :: Type
+     { _ftLocation     :: Location
+     , _ftKind         :: Kind
+     , _ftArgumentType :: Type
+     , _ftResultType   :: Type
      }
  deriving (Show)
 
 class MkFunType a where
-  mkFunType :: Location -> [Type] -> Type -> a
+  mkFunType :: Location -> Type -> Type -> a
 
 instance MkFunType FunctionType where
   mkFunType l a r = FunctionType l Star a r
@@ -141,16 +141,14 @@ instance MkFunType Type where
 
 ppFunctionType :: FunctionType -> Doc a
 ppFunctionType ft =
-  hsep (map ppType (_ftArgumentTypes ft)) <+> text "->" <+>
-  ppType (_ftResultType ft)
+  ppType (_ftArgumentType ft) <+> text "->" <+> ppType (_ftResultType ft)
 
 instance Kinded FunctionType where
   kind = _ftKind
 
 instance CanHaveFreeVars FunctionType where
-  freeVariables ft = foldl' (\ acc x -> acc `union` freeVariables x)
-                            (freeVariables (_ftResultType ft))
-                            (_ftArgumentTypes ft)
+  freeVariables ft = freeVariables (_ftArgumentType ft) `union`
+                     freeVariables (_ftResultType ft)
 
 -- -----------------------------------------------------------------------------
 

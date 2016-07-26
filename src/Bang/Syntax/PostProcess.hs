@@ -13,7 +13,7 @@ import           Bang.AST.Declaration(Declaration(..), declName,
 import           Bang.AST.Expression(Expression(..), isEmptyExpression, refName,
                                      lambdaArgumentNames, lambdaBody,
                                      isEmptyExpression)
-import           Bang.AST.Type(Type(..), rtName, ftArgumentTypes, ftResultType,
+import           Bang.AST.Type(Type(..), rtName, ftArgumentType, ftResultType,
                                taLeftType, taRightType)
 import           Bang.Monad(Compiler, BangError(..), err, err', registerName)
 import           Bang.Syntax.Location(Location, ppLocation)
@@ -26,6 +26,7 @@ import           Data.Graph(SCC(..))
 import           Data.Graph.SCC(stronglyConnComp)
 import           Data.Map.Strict(Map)
 import qualified Data.Map.Strict as Map
+import           Data.Set(toList)
 import           Data.Text.Lazy(uncons)
 import           Text.PrettyPrint.Annotated(text, ($+$), (<+>), nest, quotes)
 
@@ -115,19 +116,15 @@ linkNames decls =
        let t' = set rtName name t
        return (TypeRef t', nameMap') 
   linkType nameMap   (TypeFun t)  =
-    do (argTypes, nameMap')  <- foldM linkTypes ([], nameMap) (view ftArgumentTypes t)
-       (resType,  nameMap'') <- linkType nameMap' (view ftResultType t)
-       return (TypeFun (set ftArgumentTypes argTypes $
-                        set ftResultType    resType  t),
+    do (argType, nameMap')  <- linkType nameMap  (view ftArgumentType t)
+       (resType, nameMap'') <- linkType nameMap' (view ftResultType   t)
+       return (TypeFun (set ftArgumentType argType $
+                        set ftResultType   resType t),
                nameMap'')
   linkType nameMap   (TypeApp t)  =
     do (lt, nameMap')  <- linkType nameMap  (view taLeftType  t)
        (rt, nameMap'') <- linkType nameMap' (view taRightType t)
        return (TypeApp (set taLeftType lt (set taRightType rt t)), nameMap'')
-  --
-  linkTypes (acc, nameMap) argType =
-    do (argType', nameMap') <- linkType nameMap argType
-       return (acc ++ [argType'], nameMap')
   -- 
   linkExpr _ x | isEmptyExpression x = return x
   linkExpr _ x@(ConstExp  _) = return x
@@ -217,4 +214,4 @@ orderDecls decls = map unSCC (stronglyConnComp nodes)
   unSCC (CyclicSCC xs) = xs
   --
   nodes = map tuplify decls
-  tuplify d = (d, view declName d, freeVariables d)
+  tuplify d = (d, view declName d, toList (freeVariables d))

@@ -24,7 +24,7 @@ import Bang.Syntax.Location(Location)
 import Bang.Utils.FreeVars(CanHaveFreeVars(..))
 import Control.Lens(Lens', view, set, lens)
 import Control.Lens(makeLenses)
-import Data.List(delete, union)
+import Data.Set(delete, union)
 import Text.PrettyPrint.Annotated(Doc, text, (<+>), ($+$), (<>), empty, space)
 
 data TypeDeclaration = TypeDeclaration
