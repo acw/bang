@@ -6,3 +6,8 @@
 hsrc/Syntax/Lexer.hs
 hsrc/Syntax/Parser.hs
 bang
+
+
+# Added by cargo
+
+/target

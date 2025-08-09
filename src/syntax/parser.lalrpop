@@ -1,0 +1,39 @@
+use crate::syntax::*;
+use crate::syntax::error::ParserError;
+use crate::syntax::tokens::*;
+
+grammar(file_id: usize);
+
+extern {
+  type Location = usize;
+  type Error = ParserError; 
+
+  enum Token {
+    "(" => Token::OpenParen,
+    ")" => Token::CloseParen,
+    "[" => Token::OpenSquare,
+    "]" => Token::CloseSquare,
+    "{" => Token::OpenBrace,
+    "}" => Token::CloseBrace,
+    ";" => Token::Semi,
+    ":" => Token::Colon,
+    "," => Token::Comma,
+    "`" => Token::BackTick,
+    "\\" => Token::Lambda(_),
+
+    "<constructor>" => Token::TypeName(<String>),
+    "<value>" => Token::ValueName(<String>),
+    "<op>" => Token::OperatorName(<String>),
+    "<prim_constructor>" => Token::PrimitiveTypeName(<String>),
+    "<prim_value>" => Token::PrimitiveValueName(<String>),
+    "<integer>" => Token::Integer(<IntegerWithBase>),
+    "<char>" => Token::Character(<char>),
+    "<string>" => Token::String(<String>),
+  }
+}
+
+pub ConstantValue: ConstantValue = {
+  <s:@L> <x:"<integer>"> <e:@L> => ConstantValue::Integer(Location::new(file_id, s..e), x),
+  <s:@L> <x:"<char>"> <e:@L> => ConstantValue::Character(Location::new(file_id, s..e), x),
+  <s:@L> <x:"<string>"> <e:@L> => ConstantValue::String(Location::new(file_id, s..e), x),
+}
