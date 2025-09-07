@@ -22,13 +22,15 @@ pub enum Token {
     Colon,
     Comma,
     BackTick,
+    Arrow,
     Lambda(bool),
 
     TypeName(#[proptest(regex = r"[A-Z][a-zA-Z0-9_]*")] String),
     ValueName(#[proptest(regex = r"[a-z_][a-zA-Z0-9_]*")] String),
     OperatorName(
         #[proptest(
-            regex = r"[\~\!\@\#\$\%\^\&\*\+\-\=\.<>\?\|][\~\!\@\#\$\%\^\&\*\+\-\=\.<>\?\|_]*"
+            regex = r"[\~\!\@\#\$\%\^\&\*\+\-\=\.<>\?\|][\~\!\@\#\$\%\^\&\*\+\-\=\.<>\?\|_]*",
+            filter = "|x| x != \"->\""
         )]
         String,
     ),
@@ -54,6 +56,7 @@ impl fmt::Display for Token {
             Token::Colon => write!(f, ":"),
             Token::Comma => write!(f, ","),
             Token::BackTick => write!(f, "`"),
+            Token::Arrow => write!(f, "->"),
             Token::Lambda(false) => write!(f, "\\"),
             Token::Lambda(true) => write!(f, "λ"),
             Token::TypeName(str) => write!(f, "{str}"),
@@ -174,6 +177,7 @@ impl<'a> LexerState<'a> {
                 '0' => return self.starts_with_zero(token_start_offset),
                 '\'' => return self.starts_with_single(token_start_offset),
                 '\"' => return self.starts_with_double(token_start_offset),
+                '-' => return self.starts_with_dash(token_start_offset),
                 _ => {}
             }
 
@@ -437,6 +441,27 @@ impl<'a> LexerState<'a> {
         Err(LexerError::UnfinishedString {
             span: token_start_offset..self.stream.offset(),
         })
+    }
+
+    fn starts_with_dash(
+        &mut self,
+        token_start_offset: usize,
+    ) -> Result<Option<(usize, Token, usize)>, LexerError> {
+        match self.next_char() {
+            None => Ok(Some((token_start_offset, Token::OperatorName("-".into()), token_start_offset))),
+            Some((end, '>')) => Ok(Some((token_start_offset, Token::Arrow, end))),
+            Some((_, c)) if !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control() =>
+                self.parse_identifier(
+                    token_start_offset,
+                    format!("-{c}"),
+                    |c| !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control(),
+                    Token::OperatorName,
+                ),
+            Some((idx, c)) => {
+                self.stash_char(idx, c);
+                Ok(Some((token_start_offset, Token::OperatorName("-".into()), idx)))
+            }
+        }
     }
 }
 
