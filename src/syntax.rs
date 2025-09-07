@@ -1,10 +1,10 @@
 mod error;
+mod parse;
 pub mod tokens;
 
 #[cfg(test)]
 use crate::syntax::error::ParserError;
-#[cfg(test)]
-use crate::syntax::parser::*;
+use crate::syntax::parse::Parser;
 #[cfg(test)]
 use crate::syntax::tokens::Lexer;
 use codespan_reporting::diagnostic::Label;
@@ -171,7 +171,7 @@ pub enum Type {
     Variable(Location, String),
     Primitive(Location, String),
     Application(Box<Type>, Vec<Type>),
-    Function(Box<Type>, Box<Type>),
+    Function(Vec<Type>, Box<Type>),
 }
 
 #[derive(Debug)]
@@ -202,14 +202,9 @@ pub struct IntegerWithBase {
 #[test]
 fn can_parse_constants() {
     let parse_constant = |str| {
-        let lexer = Lexer::from(str).map(|item| {
-            item.map_err(|e| ParserError::LexerError {
-                file_id: 0,
-                error: e,
-            })
-        });
-        let result = ConstantValueParser::new().parse(0, lexer);
-        result
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new(0, lexer);
+        result.parse_constant()
     };
 
     assert!(matches!(
@@ -265,20 +260,14 @@ fn can_parse_constants() {
 #[test]
 fn can_parse_types() {
     let parse_type = |str| {
-        let lexer = Lexer::from(str).map(|item| {
-            item.map_err(|e| ParserError::LexerError {
-                file_id: 0,
-                error: e,
-            })
-        });
-        let result = TypeParser::new().parse(0, lexer);
-        result
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new(0, lexer);
+        result.parse_type()
     };
 
-    println!("cons result: {:?}", parse_type("Cons"));
     assert!(matches!(
         parse_type("Cons"),
-        Ok(Type::Application(cons, empty)) if 
+        Ok(Type::Application(cons, empty)) if
             matches!(cons.as_ref(), Type::Constructor(_, c) if c == "Cons") &&
             empty.is_empty()
     ));
@@ -293,6 +282,9 @@ fn can_parse_types() {
                matches!(b.as_slice(), [Type::Variable(_, b1), Type::Variable(_, b2)]
                    if b1 == "a" && b2 == "b")
     ));
+    println!("------");
+    println!("result: {:?}", parse_type("a -> z"));
+    println!("------");
     assert!(matches!(
         parse_type("a -> z"),
         Ok(Type::Function(a, z))

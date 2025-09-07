@@ -2,7 +2,14 @@ use crate::syntax::IntegerWithBase;
 use crate::syntax::error::LexerError;
 use proptest_derive::Arbitrary;
 use std::fmt;
+use std::ops::Range;
 use std::str::CharIndices;
+
+#[derive(Clone)]
+pub struct LocatedToken {
+    pub token: Token,
+    pub span: Range<usize>,
+}
 
 /// A single token of the input stream; used to help the parsing function over
 /// more concrete things than bytes.
@@ -92,7 +99,6 @@ struct LexerState<'a> {
 
 impl<'a> From<&'a str> for Lexer<'a> {
     fn from(value: &'a str) -> Self {
-        println!("LEXING '{value}'");
         Lexer::Working(LexerState {
             stream: value.char_indices(),
             buffer: None,
@@ -110,7 +116,7 @@ impl<'a> Lexer<'a> {
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = Result<(usize, Token, usize), LexerError>;
+    type Item = Result<LocatedToken, LexerError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -124,15 +130,11 @@ impl<'a> Iterator for Lexer<'a> {
                 }
 
                 Ok(None) => {
-                    println!("LEXER DONE");
                     *self = Lexer::Done(state.stream.offset());
                     None
                 }
 
-                Ok(Some((start, token, end))) => {
-                    println!("TOKEN: {:?}", token);
-                    Some(Ok((start, token, end)))
-                }
+                Ok(Some(ltoken)) => Some(Ok(ltoken)),
             },
         }
     }
@@ -141,24 +143,26 @@ impl<'a> Iterator for Lexer<'a> {
 impl<'a> LexerState<'a> {
     fn next_char(&mut self) -> Option<(usize, char)> {
         let result = self.buffer.take().or_else(|| self.stream.next());
-        println!("next_char() -> {result:?}");
         result
     }
 
     fn stash_char(&mut self, idx: usize, c: char) {
-        println!("stash_char({idx}, {c})");
         assert!(self.buffer.is_none());
         self.buffer = Some((idx, c));
     }
 
-    fn next_token(&mut self) -> Result<Option<(usize, Token, usize)>, LexerError> {
+    fn next_token(&mut self) -> Result<Option<LocatedToken>, LexerError> {
         while let Some((token_start_offset, char)) = self.next_char() {
             if char.is_whitespace() {
                 continue;
             }
 
-            let simple_response =
-                |token| Ok(Some((token_start_offset, token, self.stream.offset())));
+            let simple_response = |token| {
+                Ok(Some(LocatedToken {
+                    token,
+                    span: token_start_offset..self.stream.offset(),
+                }))
+            };
 
             match char {
                 '(' => return simple_response(Token::OpenParen),
@@ -219,14 +223,17 @@ impl<'a> LexerState<'a> {
     fn starts_with_zero(
         &mut self,
         token_start_offset: usize,
-    ) -> Result<Option<(usize, Token, usize)>, LexerError> {
+    ) -> Result<Option<LocatedToken>, LexerError> {
         match self.next_char() {
             None => {
                 let token = Token::Integer(IntegerWithBase {
                     base: None,
                     value: 0,
                 });
-                Ok(Some((token_start_offset, token, self.stream.offset())))
+                Ok(Some(LocatedToken {
+                    token,
+                    span: token_start_offset..self.stream.offset(),
+                }))
             }
 
             Some((_, 'b')) => self.parse_integer(token_start_offset, 2, Some(2), 0),
@@ -243,7 +250,10 @@ impl<'a> LexerState<'a> {
                         base: None,
                         value: 0,
                     });
-                    Ok(Some((token_start_offset, token, offset)))
+                    Ok(Some(LocatedToken {
+                        token,
+                        span: token_start_offset..offset,
+                    }))
                 }
             }
         }
@@ -255,7 +265,7 @@ impl<'a> LexerState<'a> {
         base: u32,
         provided_base: Option<u8>,
         mut value: u64,
-    ) -> Result<Option<(usize, Token, usize)>, LexerError> {
+    ) -> Result<Option<LocatedToken>, LexerError> {
         let mut end_offset = self.stream.offset();
 
         while let Some((offset, c)) = self.next_char() {
@@ -273,7 +283,10 @@ impl<'a> LexerState<'a> {
             value,
         });
 
-        Ok(Some((token_start_offset, token, end_offset)))
+        Ok(Some(LocatedToken {
+            token,
+            span: token_start_offset..end_offset,
+        }))
     }
 
     fn parse_identifier(
@@ -282,7 +295,7 @@ impl<'a> LexerState<'a> {
         mut identifier: String,
         mut allowed_character: fn(char) -> bool,
         mut builder: fn(String) -> Token,
-    ) -> Result<Option<(usize, Token, usize)>, LexerError> {
+    ) -> Result<Option<LocatedToken>, LexerError> {
         let mut end_offset = self.stream.offset();
 
         while let Some((offset, c)) = self.next_char() {
@@ -321,13 +334,16 @@ impl<'a> LexerState<'a> {
             }
         }
 
-        Ok(Some((token_start_offset, builder(identifier), end_offset)))
+        Ok(Some(LocatedToken {
+            token: builder(identifier),
+            span: token_start_offset..end_offset,
+        }))
     }
 
     fn starts_with_single(
         &mut self,
         token_start_offset: usize,
-    ) -> Result<Option<(usize, Token, usize)>, LexerError> {
+    ) -> Result<Option<LocatedToken>, LexerError> {
         let Some((_, mut char)) = self.next_char() else {
             return Err(LexerError::UnfinishedCharacter {
                 span: token_start_offset..self.stream.offset(),
@@ -351,7 +367,10 @@ impl<'a> LexerState<'a> {
             });
         }
 
-        Ok(Some((token_start_offset, Token::Character(char), idx)))
+        Ok(Some(LocatedToken {
+            token: Token::Character(char),
+            span: token_start_offset..idx,
+        }))
     }
 
     fn get_escaped_character(&mut self, token_start_offset: usize) -> Result<char, LexerError> {
@@ -425,12 +444,17 @@ impl<'a> LexerState<'a> {
     fn starts_with_double(
         &mut self,
         token_start_offset: usize,
-    ) -> Result<Option<(usize, Token, usize)>, LexerError> {
+    ) -> Result<Option<LocatedToken>, LexerError> {
         let mut result = String::new();
 
         while let Some((idx, char)) = self.next_char() {
             match char {
-                '"' => return Ok(Some((token_start_offset, Token::String(result), idx))),
+                '"' => {
+                    return Ok(Some(LocatedToken {
+                        token: Token::String(result),
+                        span: token_start_offset..idx,
+                    }));
+                }
 
                 '\\' => result.push(self.get_escaped_character(idx)?),
 
@@ -446,12 +470,18 @@ impl<'a> LexerState<'a> {
     fn starts_with_dash(
         &mut self,
         token_start_offset: usize,
-    ) -> Result<Option<(usize, Token, usize)>, LexerError> {
+    ) -> Result<Option<LocatedToken>, LexerError> {
         match self.next_char() {
-            None => Ok(Some((token_start_offset, Token::OperatorName("-".into()), token_start_offset))),
-            Some((end, '>')) => Ok(Some((token_start_offset, Token::Arrow, end))),
-            Some((_, c)) if !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control() =>
-                self.parse_identifier(
+            None => Ok(Some(LocatedToken {
+                token: Token::OperatorName("-".into()),
+                span: token_start_offset..token_start_offset + 1,
+            })),
+            Some((end, '>')) => Ok(Some(LocatedToken {
+                token: Token::Arrow,
+                span: token_start_offset..end,
+            })),
+            Some((_, c)) if !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control() => self
+                .parse_identifier(
                     token_start_offset,
                     format!("-{c}"),
                     |c| !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control(),
@@ -459,7 +489,10 @@ impl<'a> LexerState<'a> {
                 ),
             Some((idx, c)) => {
                 self.stash_char(idx, c);
-                Ok(Some((token_start_offset, Token::OperatorName("-".into()), idx)))
+                Ok(Some(LocatedToken {
+                    token: Token::OperatorName("-".into()),
+                    span: token_start_offset..idx,
+                }))
             }
         }
     }
@@ -474,7 +507,7 @@ proptest::proptest! {
         let initial_token = tokens.next()
             .expect("Can get a token without an error.")
             .expect("Can get a valid token.")
-            .1;
+            .token;
 
         proptest::prop_assert_eq!(token, initial_token);
         proptest::prop_assert!(tokens.next().is_none());
@@ -488,7 +521,7 @@ fn parsed_single_token(s: &str) -> Token {
         .next()
         .expect(format!("Can get at least one token from {s:?}").as_str())
         .expect("Can get a valid token.")
-        .1;
+        .token;
 
     assert!(
         tokens.next().is_none(),
@@ -608,7 +641,7 @@ fn operators_work_as_expected() {
 #[test]
 fn can_separate_pieces() {
     let mut lexer = Lexer::from("a-b");
-    let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").1);
+    let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").token);
 
     assert_eq!(Some(Token::ValueName("a".into())), next_token());
     assert_eq!(Some(Token::OperatorName("-".into())), next_token());
@@ -616,7 +649,7 @@ fn can_separate_pieces() {
     assert_eq!(None, next_token());
 
     let mut lexer = Lexer::from("a--b");
-    let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").1);
+    let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").token);
 
     assert_eq!(Some(Token::ValueName("a".into())), next_token());
     assert_eq!(Some(Token::OperatorName("--".into())), next_token());
@@ -624,7 +657,7 @@ fn can_separate_pieces() {
     assert_eq!(None, next_token());
 
     let mut lexer = Lexer::from("a - -b");
-    let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").1);
+    let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").token);
 
     assert_eq!(Some(Token::ValueName("a".into())), next_token());
     assert_eq!(Some(Token::OperatorName("-".into())), next_token());

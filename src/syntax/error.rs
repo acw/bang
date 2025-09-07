@@ -7,6 +7,17 @@ use thiserror::Error;
 pub enum ParserError {
     #[error("Lexer error at {file_id}: {error}")]
     LexerError { file_id: usize, error: LexerError },
+
+    #[error("Unacceptable end of file at {file_id} while {place}")]
+    UnacceptableEof { file_id: usize, place: &'static str },
+
+    #[error("Unexpected token at {file_id}: expected {expected}, saw {token}")]
+    UnexpectedToken {
+        file_id: usize,
+        span: Range<usize>,
+        token: Token,
+        expected: &'static str,
+    },
 }
 
 #[derive(Clone, Debug, Error, PartialEq)]
