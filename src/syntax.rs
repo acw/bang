@@ -48,10 +48,12 @@ impl Location {
     }
 }
 
+#[derive(Debug)]
 pub struct Module {
     definitions: Vec<Definition>,
 }
 
+#[derive(Debug)]
 pub struct Definition {
     location: Location,
     export: ExportClass,
@@ -59,6 +61,7 @@ pub struct Definition {
     definition: Def,
 }
 
+#[derive(Debug)]
 pub enum Def {
     Enumeration(EnumerationDef),
     Structure(StructureDef),
@@ -77,28 +80,33 @@ impl Def {
     }
 }
 
+#[derive(Debug)]
 pub struct EnumerationDef {
     location: Location,
     options: Vec<EnumerationVariant>,
 }
 
+#[derive(Debug)]
 pub struct EnumerationVariant {
     location: Location,
     name: String,
     arguments: Vec<Type>,
 }
 
+#[derive(Debug)]
 pub struct StructureDef {
     name: String,
     location: Location,
     fields: Vec<StructureField>,
 }
 
+#[derive(Debug)]
 pub struct StructureField {
     name: String,
     field_type: Type,
 }
 
+#[derive(Debug)]
 pub struct FunctionDef {
     name: String,
     location: Location,
@@ -107,26 +115,31 @@ pub struct FunctionDef {
     body: Vec<Statement>,
 }
 
+#[derive(Debug)]
 pub struct FunctionArg {
     name: String,
     arg_type: Option<Type>,
 }
 
+#[derive(Debug)]
 pub struct ValueDef {
     name: String,
     location: Location,
     value: Value,
 }
 
+#[derive(Debug)]
 pub enum ExportClass {
     Public,
     Private,
 }
 
+#[derive(Debug)]
 pub enum Statement {
     Binding(BindingStmt),
 }
 
+#[derive(Debug)]
 pub struct BindingStmt {
     location: Location,
     mutable: bool,
@@ -134,10 +147,12 @@ pub struct BindingStmt {
     value: Expression,
 }
 
+#[derive(Debug)]
 pub enum Expression {
     Value(Value),
 }
 
+#[derive(Debug)]
 pub struct TypeRestrictions {
     restrictions: Vec<TypeRestriction>,
 }
@@ -150,24 +165,28 @@ impl TypeRestrictions {
     }
 }
 
+#[derive(Debug)]
 pub struct TypeRestriction {
     location: Location,
     class: String,
     variables: Vec<String>,
 }
 
+#[derive(Debug)]
 pub enum Type {
     Constructor(Location, String),
     Variable(Location, String),
     Primitive(Location, String),
     Application(Box<Type>, Vec<Type>),
-    Function(Vec<Type>, Box<Type>),
+    Function(Box<Type>, Box<Type>),
 }
 
+#[derive(Debug)]
 pub enum Value {
     Constant(ConstantValue),
 }
 
+#[derive(Debug)]
 pub enum ConstantValue {
     Integer(Location, IntegerWithBase),
     Character(Location, char),
@@ -247,5 +266,60 @@ fn can_parse_constants() {
     assert!(matches!(
         parse_constant("'f'"),
         Ok(ConstantValue::Character(_, 'f'))
+    ));
+}
+
+#[test]
+fn can_parse_types() {
+    let parse_type = |str| {
+        let lexer = Lexer::from(str).map(|item| {
+            item.map_err(|e| ParserError::LexerError {
+                file_id: 0,
+                error: e,
+            })
+        });
+        let result = TypeParser::new().parse(0, lexer);
+        result
+    };
+
+    println!("cons result: {:?}", parse_type("Cons"));
+    assert!(matches!(
+        parse_type("Cons"),
+        Ok(Type::Application(cons, empty)) if 
+            matches!(cons.as_ref(), Type::Constructor(_, c) if c == "Cons") &&
+            empty.is_empty()
+    ));
+    assert!(matches!(
+        parse_type("cons"),
+        Ok(Type::Variable(_, c)) if c == "cons"
+    ));
+    assert!(matches!(
+        parse_type("Cons a b"),
+        Ok(Type::Application(a, b))
+            if matches!(a.as_ref(), Type::Constructor(_, c) if c == "Cons") &&
+               matches!(b.as_slice(), [Type::Variable(_, b1), Type::Variable(_, b2)]
+                   if b1 == "a" && b2 == "b")
+    ));
+    assert!(matches!(
+        parse_type("a -> z"),
+        Ok(Type::Function(a, z))
+            if matches!(a.as_slice(), [Type::Variable(_, a1)] if a1 == "a") &&
+               matches!(z.as_ref(), Type::Variable(_, z1) if z1 == "z")
+    ));
+    assert!(matches!(
+        parse_type("a b -> z"),
+        Ok(Type::Function(a, z))
+            if matches!(a.as_slice(), [Type::Variable(_, a1), Type::Variable(_, b1)]
+                    if a1 == "a" && b1 == "b") &&
+               matches!(z.as_ref(), Type::Variable(_, z1) if z1 == "z")
+    ));
+    assert!(matches!(
+        parse_type("Cons a b -> z"),
+        Ok(Type::Function(a, z))
+            if matches!(a.as_slice(), [Type::Application(cons, appargs)]
+                if matches!(cons.as_ref(), Type::Constructor(_, c) if c == "Cons") &&
+                   matches!(appargs.as_slice(), [Type::Variable(_, b1), Type::Variable(_, b2)]
+                       if b1 == "a" && b2 == "b")) &&
+               matches!(z.as_ref(), Type::Variable(_, z1) if z1 == "z")
     ));
 }
