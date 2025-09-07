@@ -1,11 +1,4 @@
-use lalrpop_util::lalrpop_mod;
-
 mod error;
-lalrpop_mod!(
-    #[allow(clippy::just_underscores_and_digits, clippy::clone_on_copy)]
-    parser,
-    "/syntax/parser.rs"
-);
 pub mod tokens;
 
 #[cfg(test)]
