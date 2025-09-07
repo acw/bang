@@ -20,6 +20,7 @@ extern {
     "," => Token::Comma,
     "`" => Token::BackTick,
     "\\" => Token::Lambda(_),
+    "->" => Token::Arrow,
 
     "<constructor>" => Token::TypeName(<String>),
     "<value>" => Token::ValueName(<String>),
@@ -30,6 +31,36 @@ extern {
     "<char>" => Token::Character(<char>),
     "<string>" => Token::String(<String>),
   }
+}
+
+pub Type: Type = {
+  FunctionType,
+}
+
+FunctionType: Type = {
+  TypeApplication,
+  <argtype:FunctionType> "->" <ret:TypeApplication> =>
+    Type::Function(Box::new(argtype), Box::new(ret)),
+}
+
+TypeApplication: Type = {
+  BaseType,
+  <s:@L> <c:"<constructor>"> <e:@L> <arguments: BaseType*> => {
+    let constructor = Type::Constructor(Location::new(file_id, s..e), c);
+    Type::Application(Box::new(constructor), arguments)
+  },
+  <s:@L> <c:"<prim_constructor>"> <e:@L> <arguments: BaseType*> => {
+    let constructor = Type::Constructor(Location::new(file_id, s..e), c);
+    Type::Application(Box::new(constructor), arguments)
+  },
+}
+
+BaseType: Type = {
+  <s:@L> <v:"<value>"> <e:@L> =>
+    Type::Variable(Location::new(file_id, s..e), v),
+  <s:@L> <p: "<prim_value>"> <e:@L> =>
+    Type::Primitive(Location::new(file_id, s..e), p),
+  "(" <t:Type> ")" => t,
 }
 
 pub ConstantValue: ConstantValue = {
