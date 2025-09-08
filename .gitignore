@@ -9,6 +9,6 @@ bang
 
 
 # Added by cargo
-
+/proptest-regressions
 /target
 .aider*
