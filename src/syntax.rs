@@ -1,45 +1,16 @@
 mod error;
+mod location;
+mod name;
 mod parse;
+#[cfg(test)]
+mod parser_tests;
 pub mod tokens;
 
-#[cfg(test)]
-use crate::syntax::error::ParserError;
-use crate::syntax::parse::Parser;
-#[cfg(test)]
-use crate::syntax::tokens::Lexer;
-use codespan_reporting::diagnostic::Label;
+pub use location::{Located, Location};
+pub use name::Name;
 use proptest_derive::Arbitrary;
-use std::cmp::{max, min};
 use std::fmt::Debug;
 use std::ops::Range;
-
-#[derive(Debug)]
-pub struct Location {
-    file_id: usize,
-    span: Range<usize>,
-}
-
-impl Location {
-    pub fn new(file_id: usize, span: Range<usize>) -> Self {
-        Location { file_id, span }
-    }
-
-    pub fn extend_to(&self, other: &Location) -> Location {
-        assert_eq!(self.file_id, other.file_id);
-        Location {
-            file_id: self.file_id,
-            span: min(self.span.start, other.span.start)..max(self.span.end, other.span.end),
-        }
-    }
-
-    pub fn primary_label(&self) -> Label<usize> {
-        Label::primary(self.file_id, self.span.clone())
-    }
-
-    pub fn secondary_label(&self) -> Label<usize> {
-        Label::secondary(self.file_id, self.span.clone())
-    }
-}
 
 #[derive(Debug)]
 pub struct Module {
@@ -54,6 +25,12 @@ pub struct Definition {
     definition: Def,
 }
 
+impl Located for Definition {
+    fn location(&self) -> Location {
+        self.location.clone()
+    }
+}
+
 #[derive(Debug)]
 pub enum Def {
     Enumeration(EnumerationDef),
@@ -62,28 +39,29 @@ pub enum Def {
     Value(ValueDef),
 }
 
-impl Def {
-    fn location(&self) -> &Location {
+impl Located for Def {
+    fn location(&self) -> Location {
         match self {
-            Def::Enumeration(def) => &def.location,
-            Def::Structure(def) => &def.location,
-            Def::Function(def) => &def.location,
-            Def::Value(def) => &def.location,
+            Def::Enumeration(def) => def.location.clone(),
+            Def::Structure(def) => def.location.clone(),
+            Def::Function(def) => def.location.clone(),
+            Def::Value(def) => def.location.clone(),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct EnumerationDef {
+    name: String,
     location: Location,
-    options: Vec<EnumerationVariant>,
+    variants: Vec<EnumerationVariant>,
 }
 
 #[derive(Debug)]
 pub struct EnumerationVariant {
     location: Location,
     name: String,
-    arguments: Vec<Type>,
+    argument: Option<Type>,
 }
 
 #[derive(Debug)]
@@ -95,8 +73,10 @@ pub struct StructureDef {
 
 #[derive(Debug)]
 pub struct StructureField {
+    location: Location,
+    export: ExportClass,
     name: String,
-    field_type: Type,
+    field_type: Option<Type>,
 }
 
 #[derive(Debug)]
@@ -118,7 +98,7 @@ pub struct FunctionArg {
 pub struct ValueDef {
     name: String,
     location: Location,
-    value: Value,
+    value: Expression,
 }
 
 #[derive(Debug)]
@@ -142,7 +122,16 @@ pub struct BindingStmt {
 
 #[derive(Debug)]
 pub enum Expression {
-    Value(Value),
+    Value(ConstantValue),
+    Reference(Name),
+    EnumerationValue(Name, Name, Option<Box<Expression>>),
+    StructureValue(Name, Vec<FieldValue>),
+}
+
+#[derive(Debug)]
+pub struct FieldValue {
+    field: Name,
+    value: Expression,
 }
 
 #[derive(Debug)]
@@ -160,9 +149,8 @@ impl TypeRestrictions {
 
 #[derive(Debug)]
 pub struct TypeRestriction {
-    location: Location,
-    class: String,
-    variables: Vec<String>,
+    constructor: Type,
+    arguments: Vec<Type>,
 }
 
 #[derive(Debug)]
@@ -174,9 +162,28 @@ pub enum Type {
     Function(Vec<Type>, Box<Type>),
 }
 
-#[derive(Debug)]
-pub enum Value {
-    Constant(ConstantValue),
+impl Located for Type {
+    fn location(&self) -> Location {
+        match self {
+            Type::Constructor(l, _) => l.clone(),
+            Type::Variable(l, _) => l.clone(),
+            Type::Primitive(l, _) => l.clone(),
+            Type::Application(t1, ts) => {
+                let mut result = t1.location();
+                if let Some(last) = ts.last() {
+                    result = result.extend_to(&last.location());
+                }
+                result
+            }
+            Type::Function(args, ret) => {
+                if let Some(first) = args.first() {
+                    first.location().extend_to(&ret.location())
+                } else {
+                    ret.location()
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -197,114 +204,4 @@ pub struct IntegerWithBase {
     ]")]
     base: Option<u8>,
     value: u64,
-}
-
-#[test]
-fn can_parse_constants() {
-    let parse_constant = |str| {
-        let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
-        result.parse_constant()
-    };
-
-    assert!(matches!(
-        parse_constant("16"),
-        Ok(ConstantValue::Integer(
-            _,
-            IntegerWithBase {
-                base: None,
-                value: 16,
-            }
-        ))
-    ));
-    assert!(matches!(
-        parse_constant("0x10"),
-        Ok(ConstantValue::Integer(
-            _,
-            IntegerWithBase {
-                base: Some(16),
-                value: 16,
-            }
-        ))
-    ));
-    assert!(matches!(
-        parse_constant("0o20"),
-        Ok(ConstantValue::Integer(
-            _,
-            IntegerWithBase {
-                base: Some(8),
-                value: 16,
-            }
-        ))
-    ));
-    assert!(matches!(
-        parse_constant("0b10000"),
-        Ok(ConstantValue::Integer(
-            _,
-            IntegerWithBase {
-                base: Some(2),
-                value: 16,
-            }
-        ))
-    ));
-    assert!(
-        matches!(parse_constant("\"foo\""), Ok(ConstantValue::String(_, x))
-            if x == "foo")
-    );
-    assert!(matches!(
-        parse_constant("'f'"),
-        Ok(ConstantValue::Character(_, 'f'))
-    ));
-}
-
-#[test]
-fn can_parse_types() {
-    let parse_type = |str| {
-        let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
-        result.parse_type()
-    };
-
-    assert!(matches!(
-        parse_type("Cons"),
-        Ok(Type::Application(cons, empty)) if
-            matches!(cons.as_ref(), Type::Constructor(_, c) if c == "Cons") &&
-            empty.is_empty()
-    ));
-    assert!(matches!(
-        parse_type("cons"),
-        Ok(Type::Variable(_, c)) if c == "cons"
-    ));
-    assert!(matches!(
-        parse_type("Cons a b"),
-        Ok(Type::Application(a, b))
-            if matches!(a.as_ref(), Type::Constructor(_, c) if c == "Cons") &&
-               matches!(b.as_slice(), [Type::Variable(_, b1), Type::Variable(_, b2)]
-                   if b1 == "a" && b2 == "b")
-    ));
-    println!("------");
-    println!("result: {:?}", parse_type("a -> z"));
-    println!("------");
-    assert!(matches!(
-        parse_type("a -> z"),
-        Ok(Type::Function(a, z))
-            if matches!(a.as_slice(), [Type::Variable(_, a1)] if a1 == "a") &&
-               matches!(z.as_ref(), Type::Variable(_, z1) if z1 == "z")
-    ));
-    assert!(matches!(
-        parse_type("a b -> z"),
-        Ok(Type::Function(a, z))
-            if matches!(a.as_slice(), [Type::Variable(_, a1), Type::Variable(_, b1)]
-                    if a1 == "a" && b1 == "b") &&
-               matches!(z.as_ref(), Type::Variable(_, z1) if z1 == "z")
-    ));
-    assert!(matches!(
-        parse_type("Cons a b -> z"),
-        Ok(Type::Function(a, z))
-            if matches!(a.as_slice(), [Type::Application(cons, appargs)]
-                if matches!(cons.as_ref(), Type::Constructor(_, c) if c == "Cons") &&
-                   matches!(appargs.as_slice(), [Type::Variable(_, b1), Type::Variable(_, b2)]
-                       if b1 == "a" && b2 == "b")) &&
-               matches!(z.as_ref(), Type::Variable(_, z1) if z1 == "z")
-    ));
 }

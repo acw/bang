@@ -46,9 +46,651 @@ impl<'a> Parser<'a> {
     }
 
     fn to_location(&self, span: Range<usize>) -> Location {
-        Location {
+        Location::new(self.file_id, span)
+    }
+
+    pub fn parse_module(&mut self) -> Result<Module, ParserError> {
+        let mut definitions = vec![];
+
+        loop {
+            let next_token = self.next()?;
+
+            if next_token.is_none() {
+                return Ok(Module { definitions });
+            }
+
+            definitions.push(self.parse_definition()?);
+        }
+    }
+
+    pub fn parse_definition(&mut self) -> Result<Definition, ParserError> {
+        let (export, start) = self.parse_export_class()?;
+        let type_restrictions = self.parse_type_restrictions()?;
+        let definition = self.parse_def()?;
+        let location = definition.location().merge_span(start);
+
+        Ok(Definition {
+            location,
+            export,
+            type_restrictions,
+            definition,
+        })
+    }
+
+    fn parse_export_class(&mut self) -> Result<(ExportClass, Range<usize>), ParserError> {
+        let maybe_export = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for possible export"))?;
+
+        if matches!(maybe_export.token, Token::ValueName(ref x) if x == "export") {
+            Ok((ExportClass::Public, maybe_export.span))
+        } else {
+            let start = maybe_export.span.clone();
+            self.save(maybe_export);
+            Ok((ExportClass::Private, start))
+        }
+    }
+
+    pub fn parse_type_restrictions(&mut self) -> Result<TypeRestrictions, ParserError> {
+        let Some(maybe_restrict) = self.next()? else {
+            return Ok(TypeRestrictions::empty());
+        };
+
+        if !matches!(maybe_restrict.token, Token::ValueName(ref x) if x == "restrict") {
+            self.save(maybe_restrict);
+            return Ok(TypeRestrictions::empty());
+        }
+
+        let maybe_paren = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("Looking for open paren after restrict"))?;
+
+        if !matches!(maybe_paren.token, Token::OpenParen) {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: maybe_paren.span,
+                token: maybe_paren.token,
+                expected: "open parenthesis, following the restrict keyword",
+            });
+        }
+
+        let mut restrictions = vec![];
+
+        while let Some(type_restriction) = self.parse_type_restriction()? {
+            restrictions.push(type_restriction);
+        }
+
+        let maybe_paren = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("Looking for open paren after restrict"))?;
+        if !matches!(maybe_paren.token, Token::CloseParen) {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: maybe_paren.span,
+                token: maybe_paren.token,
+                expected: "close parenthesis following type restrictions",
+            });
+        }
+
+        Ok(TypeRestrictions { restrictions })
+    }
+
+    fn parse_type_restriction(&mut self) -> Result<Option<TypeRestriction>, ParserError> {
+        let maybe_constructor = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("Looking for constructor for type restriction"))?;
+
+        let constructor = match maybe_constructor.token {
+            Token::TypeName(str) => {
+                Type::Constructor(self.to_location(maybe_constructor.span), str)
+            }
+            Token::PrimitiveTypeName(str) => {
+                Type::Primitive(self.to_location(maybe_constructor.span), str)
+            }
+
+            token @ Token::CloseParen | token @ Token::Comma => {
+                self.save(LocatedToken {
+                    token,
+                    span: maybe_constructor.span,
+                });
+                return Ok(None);
+            }
+
+            weird => {
+                return Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: maybe_constructor.span,
+                    token: weird,
+                    expected: "Constructor name, comma, or close parenthesis in type restriction",
+                });
+            }
+        };
+
+        let mut arguments = vec![];
+
+        while let Ok(t) = self.parse_base_type() {
+            arguments.push(t);
+        }
+
+        let restriction = TypeRestriction {
+            constructor,
+            arguments,
+        };
+
+        let Some(maybe_comma) = self.next()? else {
+            return Ok(Some(restriction));
+        };
+
+        match maybe_comma.token {
+            Token::Comma => {}
+            _ => self.save(maybe_comma),
+        }
+
+        Ok(Some(restriction))
+    }
+
+    fn parse_def(&mut self) -> Result<Def, ParserError> {
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for definition body"))?;
+
+        if let Ok(structure) = self.parse_structure() {
+            return Ok(Def::Structure(structure));
+        }
+
+        if let Ok(enumeration) = self.parse_enumeration() {
+            return Ok(Def::Enumeration(enumeration));
+        }
+
+        if let Ok(fun_or_val) = self.parse_function_or_value() {
+            return Ok(fun_or_val);
+        }
+
+        Err(ParserError::UnexpectedToken {
             file_id: self.file_id,
-            span,
+            span: next.span,
+            token: next.token,
+            expected: "'structure', 'enumeration', or a value identifier",
+        })
+    }
+
+    pub fn parse_structure(&mut self) -> Result<StructureDef, ParserError> {
+        let structure_token = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for definition"))?;
+        if !matches!(structure_token.token, Token::ValueName(ref s) if s == "structure") {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: structure_token.span,
+                token: structure_token.token,
+                expected: "the 'structure' keyword",
+            });
+        }
+
+        let name = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for structure name"))?;
+        let structure_name = match name.token {
+            Token::TypeName(str) => str,
+            _ => {
+                return Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: name.span,
+                    token: name.token,
+                    expected: "a structure name",
+                });
+            }
+        };
+
+        let brace = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("the open brace after a structure name"))?;
+        if !matches!(brace.token, Token::OpenBrace) {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: brace.span,
+                token: brace.token,
+                expected: "the brace after a structure name",
+            });
+        }
+
+        let mut fields = vec![];
+
+        while let Some(field_definition) = self.parse_field_definition()? {
+            fields.push(field_definition);
+        }
+
+        let brace = self.next()?.ok_or_else(|| {
+            self.bad_eof("the close brace after at the end of a structure definition")
+        })?;
+        if !matches!(brace.token, Token::CloseBrace) {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: brace.span,
+                token: brace.token,
+                expected: "the brace at the end of a structure definition",
+            });
+        }
+
+        let location = self
+            .to_location(structure_token.span)
+            .extend_to(&self.to_location(brace.span));
+
+        Ok(StructureDef {
+            name: structure_name,
+            location,
+            fields,
+        })
+    }
+
+    pub fn parse_field_value(&mut self) -> Result<Option<FieldValue>, ParserError> {
+        let maybe_name = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("parsing field definition"))?;
+
+        let field = match maybe_name.token {
+            Token::ValueName(x) => Name::new(self.to_location(maybe_name.span), x),
+            _ => {
+                self.save(maybe_name.clone());
+                return Ok(None);
+            }
+        };
+
+        let maybe_colon = self.next()?.ok_or_else(|| {
+            self.bad_eof("looking for colon, comma, or close brace after field name")
+        })?;
+        if !matches!(maybe_colon.token, Token::Colon) {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: maybe_colon.span,
+                token: maybe_colon.token,
+                expected: "colon after field name in constructor",
+            });
+        }
+
+        let value = self.parse_expression()?;
+
+        let end_token = self.next()?.ok_or_else(|| {
+            self.bad_eof("looking for comma or close brace after field definition")
+        })?;
+        if !matches!(end_token.token, Token::Comma) {
+            self.save(end_token);
+        }
+
+        Ok(Some(FieldValue { field, value }))
+    }
+
+    pub fn parse_field_definition(&mut self) -> Result<Option<StructureField>, ParserError> {
+        let (export, start) = self.parse_export_class()?;
+        let maybe_name = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("parsing field definition"))?;
+
+        let name = match maybe_name.token {
+            Token::ValueName(x) => x,
+            _ => {
+                self.save(maybe_name.clone());
+                if matches!(export, ExportClass::Private) {
+                    return Ok(None);
+                } else {
+                    return Err(ParserError::UnexpectedToken {
+                        file_id: self.file_id,
+                        span: maybe_name.span,
+                        token: maybe_name.token,
+                        expected: "a field name",
+                    });
+                }
+            }
+        };
+        let start_location = self.to_location(start);
+
+        let maybe_colon = self.next()?.ok_or_else(|| {
+            self.bad_eof("looking for colon, comma, or close brace after field name")
+        })?;
+
+        let field_type = match maybe_colon.token {
+            Token::Comma | Token::CloseBrace => {
+                self.save(maybe_colon);
+                None
+            }
+
+            Token::Colon => Some(self.parse_type()?),
+
+            _ => {
+                return Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: maybe_colon.span,
+                    token: maybe_colon.token,
+                    expected: "colon, comma, or close brace after field name",
+                });
+            }
+        };
+
+        let end_token = self.next()?.ok_or_else(|| {
+            self.bad_eof("looking for comma or close brace after field definition")
+        })?;
+
+        let maybe_end_location = match end_token.token {
+            Token::Comma => Some(self.to_location(end_token.span)),
+            Token::CloseBrace => {
+                self.save(end_token);
+                None
+            }
+            _ => {
+                return Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: end_token.span,
+                    token: end_token.token,
+                    expected: "looking for comma or close brace after field definition",
+                });
+            }
+        };
+
+        let end_location = maybe_end_location
+            .or_else(|| field_type.as_ref().map(|x| x.location()))
+            .unwrap_or_else(|| self.to_location(maybe_name.span));
+        let location = start_location.extend_to(&end_location);
+
+        Ok(Some(StructureField {
+            location,
+            export,
+            name,
+            field_type,
+        }))
+    }
+
+    pub fn parse_enumeration(&mut self) -> Result<EnumerationDef, ParserError> {
+        let enumeration_token = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for definition"))?;
+        if !matches!(enumeration_token.token, Token::ValueName(ref e) if e == "enumeration") {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: enumeration_token.span,
+                token: enumeration_token.token,
+                expected: "the 'enumeration' keyword",
+            });
+        }
+
+        let name = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for enumeration name"))?;
+        let enumeration_name = match name.token {
+            Token::TypeName(str) => str,
+            _ => {
+                return Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: name.span,
+                    token: name.token,
+                    expected: "an enumeration name",
+                });
+            }
+        };
+
+        let brace = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("the open brace after an enumeration name"))?;
+        if !matches!(brace.token, Token::OpenBrace) {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: brace.span,
+                token: brace.token,
+                expected: "the brace after an enumeration name",
+            });
+        }
+
+        let mut variants = vec![];
+
+        while let Some(variant_definition) = self.parse_enum_variant()? {
+            variants.push(variant_definition);
+        }
+
+        let brace = self.next()?.ok_or_else(|| {
+            self.bad_eof("the close brace after at the end of an enumeration definition")
+        })?;
+        if !matches!(brace.token, Token::CloseBrace) {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: brace.span,
+                token: brace.token,
+                expected: "the brace at the end of an enumeration definition",
+            });
+        }
+
+        let location = self
+            .to_location(enumeration_token.span)
+            .extend_to(&self.to_location(brace.span));
+
+        Ok(EnumerationDef {
+            name: enumeration_name,
+            location,
+            variants,
+        })
+    }
+
+    pub fn parse_enum_variant(&mut self) -> Result<Option<EnumerationVariant>, ParserError> {
+        let maybe_name = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for enumeration name"))?;
+        let name = match maybe_name.token {
+            Token::TypeName(x) => x,
+            Token::CloseBrace => {
+                self.save(maybe_name);
+                return Ok(None);
+            }
+            _ => {
+                self.save(maybe_name.clone());
+                return Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: maybe_name.span,
+                    token: maybe_name.token,
+                    expected: "variant name (identifier starting with a capital)",
+                });
+            }
+        };
+        let start_location = self.to_location(maybe_name.span);
+
+        let maybe_paren = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("trying to understand enumeration variant"))?;
+        let (argument, arg_location) = if matches!(maybe_paren.token, Token::OpenParen) {
+            let t = self.parse_type()?;
+
+            let maybe_close = self
+                .next()?
+                .ok_or_else(|| self.bad_eof("trying to parse a enumeration variant's type"))?;
+            if !matches!(maybe_close.token, Token::CloseParen) {
+                return Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: maybe_close.span,
+                    token: maybe_close.token,
+                    expected: "close paren to end an enumeration variant's type argument",
+                });
+            }
+
+            let location = t.location();
+            (Some(t), location)
+        } else {
+            self.save(maybe_paren);
+            (None, start_location.clone())
+        };
+
+        let ender = self.next()?.ok_or_else(|| {
+            self.bad_eof("looking for comma or close brace after enumeration variant")
+        })?;
+        let end_location = match ender.token {
+            Token::Comma => self.to_location(ender.span),
+            Token::CloseBrace => {
+                self.save(ender);
+                arg_location
+            }
+            _ => {
+                self.save(ender.clone());
+                return Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: ender.span,
+                    token: ender.token,
+                    expected: "comma or close brace after enumeration variant",
+                });
+            }
+        };
+
+        let location = start_location.extend_to(&end_location);
+
+        Ok(Some(EnumerationVariant {
+            name,
+            location,
+            argument,
+        }))
+    }
+
+    pub fn parse_function_or_value(&mut self) -> Result<Def, ParserError> {
+        unimplemented!()
+    }
+
+    pub fn parse_expression(&mut self) -> Result<Expression, ParserError> {
+        self.parse_base_expression()
+    }
+
+    pub fn parse_base_expression(&mut self) -> Result<Expression, ParserError> {
+        if let Ok(v) = self.parse_constant() {
+            return Ok(Expression::Value(v));
+        }
+
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for an expression"))?;
+
+        match next.token {
+            Token::OpenBrace => unimplemented!(),
+
+            Token::OpenParen => {
+                let inner = self.parse_expression()?;
+                let hopefully_close = self
+                    .next()?
+                    .ok_or_else(|| self.bad_eof("looking for close paren to finish expression"))?;
+                if matches!(hopefully_close.token, Token::CloseParen) {
+                    Ok(inner)
+                } else {
+                    self.save(hopefully_close.clone());
+                    Err(ParserError::UnexpectedToken {
+                        file_id: self.file_id,
+                        span: hopefully_close.span,
+                        token: hopefully_close.token,
+                        expected: "close paren after expression",
+                    })
+                }
+            }
+
+            Token::TypeName(n) | Token::PrimitiveTypeName(n) => {
+                let type_name = Name::new(self.to_location(next.span), n);
+                let after_type_name = self.next()?.ok_or_else(|| {
+                    self.bad_eof("looking for colon, open brace, or open paren in constructor")
+                })?;
+
+                match after_type_name.token {
+                    Token::OpenBrace => {
+                        let mut fields = vec![];
+
+                        while let Some(field) = self.parse_field_value()? {
+                            fields.push(field);
+                        }
+
+                        let closer = self.next()?.ok_or_else(|| {
+                            self.bad_eof("looking for close brace in structure value")
+                        })?;
+                        if !matches!(closer.token, Token::CloseBrace) {
+                            return Err(ParserError::UnexpectedToken {
+                                file_id: self.file_id,
+                                span: closer.span,
+                                token: closer.token,
+                                expected: "close brace or comma after field value",
+                            });
+                        }
+
+                        Ok(Expression::StructureValue(type_name, fields))
+                    }
+
+                    Token::Colon => {
+                        let second_colon = self.next()?.ok_or_else(|| {
+                            self.bad_eof("looking for second colon in enumeration value")
+                        })?;
+                        if !matches!(second_colon.token, Token::Colon) {
+                            return Err(ParserError::UnexpectedToken {
+                                file_id: self.file_id,
+                                span: second_colon.span,
+                                token: second_colon.token,
+                                expected: "second colon in enumeration value",
+                            });
+                        }
+
+                        let vname = self
+                            .next()?
+                            .ok_or_else(|| self.bad_eof("looking for enumeration value name"))?;
+
+                        let value_name = match vname.token {
+                            Token::TypeName(s) => {
+                                let loc = self.to_location(vname.span);
+                                Name::new(loc, s)
+                            }
+
+                            _ => {
+                                return Err(ParserError::UnexpectedToken {
+                                    file_id: self.file_id,
+                                    span: vname.span,
+                                    token: vname.token,
+                                    expected: "enumeration value name",
+                                });
+                            }
+                        };
+
+                        let arg = if let Some(maybe_paren) = self.next()? {
+                            let expr = self.parse_expression()?;
+
+                            let tok = self.next()?.ok_or_else(|| {
+                                self.bad_eof("looking for close paren after enum value argument")
+                            })?;
+                            if !matches!(tok.token, Token::CloseParen) {
+                                return Err(ParserError::UnexpectedToken {
+                                    file_id: self.file_id,
+                                    span: tok.span,
+                                    token: tok.token,
+                                    expected: "close paren after enum value argument",
+                                });
+                            }
+
+                            Some(Box::new(expr))
+                        } else {
+                            None
+                        };
+
+                        Ok(Expression::EnumerationValue(type_name, value_name, arg))
+                    }
+
+                    _ => Err(ParserError::UnexpectedToken {
+                        file_id: self.file_id,
+                        span: after_type_name.span,
+                        token: after_type_name.token,
+                        expected: "colon, open brace, or open paren in constructor",
+                    }),
+                }
+            }
+
+            Token::ValueName(n) | Token::PrimitiveValueName(n) => {
+                let location = self.to_location(next.span);
+                let name = Name::new(location, n);
+                Ok(Expression::Reference(name))
+            }
+
+            _ => {
+                self.save(next.clone());
+                Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: next.span,
+                    token: next.token,
+                    expected: "some base expression or an open brace",
+                })
+            }
         }
     }
 
@@ -60,12 +702,10 @@ impl<'a> Parser<'a> {
         let mut args = Vec::new();
 
         while let Ok(t) = self.parse_type_application() {
-            println!("got argument type: {t:?}");
             args.push(t);
         }
 
         let Some(maybe_arrow) = self.next()? else {
-            println!("no arrow token");
             match args.pop() {
                 None => {
                     return Err(ParserError::UnacceptableEof {
@@ -86,11 +726,10 @@ impl<'a> Parser<'a> {
         };
 
         if maybe_arrow.token == Token::Arrow {
-            println!("found function arrow");
             let right = self.parse_function_type()?;
             Ok(Type::Function(args, Box::new(right)))
         } else if args.len() == 1 {
-            println!("found non function arrow token {}", maybe_arrow.token);
+            self.save(maybe_arrow);
             Ok(args.pop().expect("length = 1 works"))
         } else {
             self.save(maybe_arrow.clone());
@@ -113,7 +752,6 @@ impl<'a> Parser<'a> {
             Token::TypeName(x) => Type::Constructor(self.to_location(span), x),
             Token::PrimitiveTypeName(x) => Type::Primitive(self.to_location(span), x),
             _ => {
-                println!("saving {token}");
                 self.save(LocatedToken { token, span });
                 return self.parse_base_type();
             }
@@ -136,6 +774,23 @@ impl<'a> Parser<'a> {
             Token::TypeName(x) => Ok(Type::Constructor(self.to_location(span), x)),
             Token::PrimitiveTypeName(x) => Ok(Type::Primitive(self.to_location(span), x)),
             Token::ValueName(x) => Ok(Type::Variable(self.to_location(span), x)),
+            Token::OpenParen => {
+                let t = self.parse_type()?;
+                let closer = self
+                    .next()?
+                    .ok_or_else(|| self.bad_eof("close paren in type"))?;
+
+                if !matches!(closer.token, Token::CloseParen) {
+                    return Err(ParserError::UnexpectedToken {
+                        file_id: self.file_id,
+                        span: closer.span,
+                        token: closer.token,
+                        expected: "close parenthesis to finish a type",
+                    });
+                }
+
+                Ok(t)
+            }
             token => {
                 self.save(LocatedToken {
                     token: token.clone(),
@@ -153,20 +808,32 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_constant(&mut self) -> Result<ConstantValue, ParserError> {
-        let LocatedToken { token, span } = self
+        let maybe_constant = self
             .next()?
             .ok_or_else(|| self.bad_eof("looking for a constant"))?;
 
-        match token {
-            Token::Integer(iwb) => Ok(ConstantValue::Integer(self.to_location(span), iwb)),
-            Token::Character(c) => Ok(ConstantValue::Character(self.to_location(span), c)),
-            Token::String(s) => Ok(ConstantValue::String(self.to_location(span), s)),
-            _ => Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
-                span,
-                token,
-                expected: "constant value",
-            }),
+        match maybe_constant.token {
+            Token::Integer(iwb) => Ok(ConstantValue::Integer(
+                self.to_location(maybe_constant.span),
+                iwb,
+            )),
+            Token::Character(c) => Ok(ConstantValue::Character(
+                self.to_location(maybe_constant.span),
+                c,
+            )),
+            Token::String(s) => Ok(ConstantValue::String(
+                self.to_location(maybe_constant.span),
+                s,
+            )),
+            _ => {
+                self.save(maybe_constant.clone());
+                Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: maybe_constant.span,
+                    token: maybe_constant.token,
+                    expected: "constant value",
+                })
+            }
         }
     }
 }
