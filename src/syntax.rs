@@ -126,6 +126,15 @@ pub enum Expression {
     Reference(Name),
     EnumerationValue(Name, Name, Option<Box<Expression>>),
     StructureValue(Name, Vec<FieldValue>),
+    Call(Box<Expression>, CallKind, Vec<Expression>),
+}
+
+#[derive(Debug)]
+pub enum CallKind {
+    Infix,
+    Normal,
+    Postfix,
+    Prefix,
 }
 
 #[derive(Debug)]

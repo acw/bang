@@ -517,3 +517,255 @@ fn structure_value() {
       parse_st("Foo{ foo: 1,, bar: \"foo\", }"),
       Err(_)));
 }
+
+#[test]
+fn infix_and_precedence() {
+    let parse_ex = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new(0, lexer);
+        result.add_infix_precedence("+", parse::Associativity::Left, 6);
+        result.add_infix_precedence("*", parse::Associativity::Right, 7);
+        result.parse_expression()
+    };
+
+
+    assert!(matches!(
+      parse_ex("0"),
+      Ok(Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value, .. })))
+          if value == 0));
+    assert!(matches!(
+      parse_ex("(0)"),
+      Ok(Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value, .. })))
+          if value == 0));
+    assert!(matches!(
+      parse_ex("((0))"),
+      Ok(Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value, .. })))
+          if value == 0));
+    assert!(matches!(
+      parse_ex("1 + 2"),
+      Ok(Expression::Call(plus, CallKind::Infix, args))
+        if matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+           matches!(args.as_slice(), [
+             Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v1, .. })),
+             Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v2, .. }))
+           ] if *v1 == 1 && *v2 == 2)));
+    assert!(matches!(
+      parse_ex("1 + 2 + 3"),
+      Ok(Expression::Call(plus, CallKind::Infix, args))
+        if matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+           matches!(args.as_slice(), [
+             Expression::Call(innerplus, CallKind::Infix, inner_args),
+             Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v3, .. }))
+           ] if *v3 == 3 &&
+             matches!(innerplus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+             matches!(inner_args.as_slice(), [
+               Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v1, .. })),
+               Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v2, .. }))
+             ] if *v1 == 1 && *v2 == 2))));
+    assert!(matches!(
+      parse_ex("1 * 2 * 3"),
+      Ok(Expression::Call(times, CallKind::Infix, args))
+        if matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+           matches!(args.as_slice(), [
+             Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v1, .. })),
+             Expression::Call(innertimes, CallKind::Infix, inner_args),
+           ] if *v1 == 1 &&
+             matches!(innertimes.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+             matches!(inner_args.as_slice(), [
+               Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v2, .. })),
+               Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v3, .. }))
+             ] if *v2 == 2 && *v3 == 3))));
+
+    assert!(matches!(
+      parse_ex("1 + 2 * 3 + 4"),
+      Ok(Expression::Call(plus_right, CallKind::Infix, outer_args)) if
+        matches!(plus_right.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+        matches!(outer_args.as_slice(), [
+          Expression::Call(plus_left, CallKind::Infix, left_args),
+          Expression::Value(ConstantValue::Integer(_, v4))
+        ] if
+           matches!(v4, IntegerWithBase{ value: 4, .. }) &&
+           matches!(plus_left.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+           matches!(left_args.as_slice(), [
+             Expression::Value(ConstantValue::Integer(_, v1)),
+             Expression::Call(times, CallKind::Infix, times_args)
+           ] if
+              matches!(v1, IntegerWithBase{ value: 1, .. }) &&
+              matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+              matches!(times_args.as_slice(), [
+                Expression::Value(ConstantValue::Integer(_, v2)),
+                Expression::Value(ConstantValue::Integer(_, v3))
+              ] if
+                matches!(v2, IntegerWithBase{ value: 2, .. }) &&
+                matches!(v3, IntegerWithBase{ value: 3, .. }))))));
+
+    assert!(matches!(
+      parse_ex("1 * 2 + 3 * 4"),
+      Ok(Expression::Call(plus, CallKind::Infix, outer_args)) if
+        matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+        matches!(outer_args.as_slice(), [
+          Expression::Call(left_times, CallKind::Infix, left_args),
+          Expression::Call(right_times, CallKind::Infix, right_args)
+        ] if
+           matches!(left_times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+           matches!(right_times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+           matches!(left_args.as_slice(), [
+             Expression::Value(ConstantValue::Integer(_, v1)),
+             Expression::Value(ConstantValue::Integer(_, v2)),
+           ] if
+              matches!(v1, IntegerWithBase { value: 1, .. }) &&
+              matches!(v2, IntegerWithBase { value: 2, .. })) &&
+           matches!(right_args.as_slice(), [
+             Expression::Value(ConstantValue::Integer(_, v3)),
+             Expression::Value(ConstantValue::Integer(_, v4)),
+           ] if
+              matches!(v3, IntegerWithBase { value: 3, .. }) &&
+              matches!(v4, IntegerWithBase { value: 4, .. })))));
+}
+
+#[test]
+fn calls() {
+    let parse_ex = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new(0, lexer);
+        result.add_infix_precedence("+", parse::Associativity::Left, 6);
+        result.add_infix_precedence("*", parse::Associativity::Right, 7);
+        result.parse_expression()
+    };
+
+    assert!(matches!(
+      parse_ex("f()"),
+      Ok(Expression::Call(f, CallKind::Normal, args)) if
+        matches!(f.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+        args.is_empty()));
+    assert!(matches!(
+      parse_ex("f(a)"),
+      Ok(Expression::Call(f, CallKind::Normal, args)) if
+        matches!(f.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+        matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a")));
+    assert!(matches!(
+      parse_ex("f(a,b)"),
+      Ok(Expression::Call(f, CallKind::Normal, args)) if
+        matches!(f.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+        matches!(args.as_slice(), [
+          Expression::Reference(a),
+          Expression::Reference(b),
+        ] if a.as_printed() == "a" && b.as_printed() == "b")));
+    assert!(matches!(
+      parse_ex("f(a,b,)"),
+      Ok(Expression::Call(f, CallKind::Normal, args)) if
+        matches!(f.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+        matches!(args.as_slice(), [
+          Expression::Reference(a),
+          Expression::Reference(b),
+        ] if a.as_printed() == "a" && b.as_printed() == "b")));
+    assert!(matches!(
+      parse_ex("f(,a,b,)"),
+      Err(_)));
+    assert!(matches!(
+      parse_ex("f(a,,b,)"),
+      Err(_)));
+    assert!(matches!(
+      parse_ex("f(a,b,,)"),
+      Err(_)));
+
+    assert!(matches!(
+      parse_ex("f()()"),
+      Ok(Expression::Call(f, CallKind::Normal, args)) if
+        matches!(f.as_ref(), Expression::Call(inner, CallKind::Normal, inner_args) if
+         matches!(inner.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+         inner_args.is_empty()) &&
+        args.is_empty()));
+
+    assert!(matches!(
+      parse_ex("f() + 1"),
+      Ok(Expression::Call(plus, CallKind::Infix, args)) if
+       matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+       matches!(args.as_slice(), [
+        Expression::Call(subcall, CallKind::Normal, subargs),
+        Expression::Value(ConstantValue::Integer(_, v1))
+       ] if
+        matches!(v1, IntegerWithBase{ value: 1, .. }) &&
+        matches!(subcall.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+        subargs.is_empty())));
+
+    assert!(matches!(
+      parse_ex("f(a + b, c*d)"),
+      Ok(Expression::Call(eff, CallKind::Normal, args)) if
+       matches!(eff.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+       matches!(args.as_slice(), [
+        Expression::Call(plus, CallKind::Infix, pargs),
+        Expression::Call(times, CallKind::Infix, targs),
+       ] if
+        matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+        matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+        matches!(pargs.as_slice(), [ Expression::Reference(a), Expression::Reference(b) ] if
+         a.as_printed() == "a" && b.as_printed() == "b") &&
+        matches!(targs.as_slice(), [ Expression::Reference(c), Expression::Reference(d) ] if
+         c.as_printed() == "c" && d.as_printed() == "d"))));
+
+    assert!(matches!(
+      parse_ex("f(a + b, c*d,)"),
+      Ok(Expression::Call(eff, CallKind::Normal, args)) if
+       matches!(eff.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+       matches!(args.as_slice(), [
+        Expression::Call(plus, CallKind::Infix, pargs),
+        Expression::Call(times, CallKind::Infix, targs),
+       ] if
+        matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+        matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+        matches!(pargs.as_slice(), [ Expression::Reference(a), Expression::Reference(b) ] if
+         a.as_printed() == "a" && b.as_printed() == "b") &&
+        matches!(targs.as_slice(), [ Expression::Reference(c), Expression::Reference(d) ] if
+         c.as_printed() == "c" && d.as_printed() == "d"))));
+
+    assert!(matches!(
+      parse_ex("3 + f(1 + 2)"),
+      Ok(Expression::Call(plus, CallKind::Infix, args)) if
+       matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+       matches!(args.as_slice(), [
+         Expression::Value(ConstantValue::Integer(_, v3)),
+         Expression::Call(eff, CallKind::Normal, fargs)
+       ] if
+        matches!(v3, IntegerWithBase{ value: 3, .. }) &&
+        matches!(eff.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+        matches!(fargs.as_slice(), [Expression::Call(p, CallKind::Infix, pargs)] if
+         matches!(p.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+         matches!(pargs.as_slice(), [Expression::Value(v1), Expression::Value(v2)] if
+          matches!(v1, ConstantValue::Integer(_, IntegerWithBase { value: 1, .. })) &&
+          matches!(v2, ConstantValue::Integer(_, IntegerWithBase { value: 2, .. })))))));
+
+    assert!(matches!(
+      parse_ex("(f . g)(1 + 2)"),
+      Ok(Expression::Call(fg, CallKind::Normal, args)) if
+       matches!(fg.as_ref(), Expression::Call(dot, CallKind::Infix, fgargs) if
+         matches!(dot.as_ref(), Expression::Reference(n) if n.as_printed() == ".") &&
+         matches!(fgargs.as_slice(), [Expression::Reference(f), Expression::Reference(g)] if
+          f.as_printed() == "f" && g.as_printed() == "g")) &&
+       matches!(args.as_slice(), [Expression::Call(plus, CallKind::Infix, pargs)] if
+         matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+         matches!(pargs.as_slice(), [Expression::Value(v1), Expression::Value(v2)] if
+           matches!(v1, ConstantValue::Integer(_, IntegerWithBase{ value: 1, .. })) &&
+           matches!(v2, ConstantValue::Integer(_, IntegerWithBase{ value: 2, .. }))))));
+
+    assert!(matches!(
+      parse_ex("a + b(2 + 3) * c"),
+      Ok(Expression::Call(plus, CallKind::Infix, pargs)) if
+       matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+       matches!(pargs.as_slice(), [
+        Expression::Reference(a),
+        Expression::Call(times, CallKind::Infix, targs)
+      ] if a.as_printed() == "a" &&
+       matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+       matches!(targs.as_slice(), [
+         Expression::Call(b, CallKind::Normal, bargs),
+         Expression::Reference(c),
+       ] if c.as_printed() == "c" &&
+        matches!(b.as_ref(), Expression::Reference(n) if n.as_printed() == "b") &&
+        matches!(bargs.as_slice(), [Expression::Call(plus, CallKind::Infix, pargs)] if
+         matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+         matches!(pargs.as_slice(), [
+           Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: 2, .. })),
+           Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: 3, .. }))
+         ]))))));
+}

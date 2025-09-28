@@ -1,19 +1,58 @@
 use crate::syntax::error::ParserError;
 use crate::syntax::tokens::{Lexer, LocatedToken, Token};
 use crate::syntax::*;
+use std::collections::HashMap;
 
 pub struct Parser<'a> {
     file_id: usize,
     lexer: Lexer<'a>,
     known_tokens: Vec<LocatedToken>,
+    precedence_table: HashMap<String, (u8, u8)>,
+}
+
+pub enum Associativity {
+    Left,
+    Right,
+    None,
 }
 
 impl<'a> Parser<'a> {
+    /// Create a new parser from the given file index and lexer.
+    ///
+    /// The file index will be used for annotating locations and for
+    /// error messages. If you don't care about either, you can use 
+    /// 0 with no loss of functionality. (Obviously, it will be harder
+    /// to create quality error messages, but you already knew that.)
     pub fn new(file_id: usize, lexer: Lexer<'a>) -> Parser<'a> {
         Parser {
             file_id,
             lexer,
             known_tokens: vec![],
+            precedence_table: HashMap::new(),
+        }
+    }
+
+    /// Add the given operator to our precedence table, at the given
+    /// precedence level and associativity.
+    pub fn add_infix_precedence<S: ToString>(
+        &mut self,
+        operator: S,
+        associativity: Associativity,
+        level: u8
+    ) {
+        let actual_associativity = match associativity {
+            Associativity::Left => (level * 2, (level * 2) + 1),
+            Associativity::Right => ((level * 2) + 1, level * 2),
+            Associativity::None => (level * 2, level * 2),
+        };
+
+        self.precedence_table.insert(operator.to_string(), actual_associativity);
+    }
+
+    fn get_precedence(&self, name: &String) -> (u8, u8) {
+        match self.precedence_table.get(name) {
+            None => (19, 20),
+            Some(x) => *x,
         }
     }
 
@@ -549,7 +588,106 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_expression(&mut self) -> Result<Expression, ParserError> {
-        self.parse_base_expression()
+        let next = self.next()?.ok_or_else(||
+            self.bad_eof("looking for an expression"))?;
+
+        self.save(next.clone());
+        match next.token {
+            Token::ValueName(x) if x == "match" => self.parse_match_expression(),
+            Token::ValueName(x) if x == "if" => self.parse_if_expression(),
+            _ => self.parse_infix(0),
+        }
+    }
+
+    pub fn parse_match_expression(&mut self) -> Result<Expression, ParserError> {
+        unimplemented!()
+    }
+
+    pub fn parse_if_expression(&mut self) -> Result<Expression, ParserError> {
+        unimplemented!()
+    }
+
+    pub fn parse_infix(&mut self, level: u8) -> Result<Expression, ParserError> {
+        let mut lhs = self.parse_base_expression()?;
+
+        loop {
+            let Some(next) = self.next()? else {
+                return Ok(lhs);
+            };
+
+            match next.token {
+                Token::OpenParen => {
+                    self.save(next);
+                    let args = self.parse_call_arguments()?;
+                    lhs = Expression::Call(Box::new(lhs), CallKind::Normal, args);
+                }
+                Token::OperatorName(ref n) => {
+                    let (left_pr, right_pr) = self.get_precedence(&n);
+
+                    if left_pr < level {
+                        self.save(next);
+                        break;
+                    }
+
+                    let rhs = self.parse_infix(right_pr)?;
+                    let name = Name::new(self.to_location(next.span), n);
+                    let opref = Box::new(Expression::Reference(name));
+                    let args = vec![lhs, rhs];
+
+                    lhs = Expression::Call(opref, CallKind::Infix, args);
+                }
+                _ => {
+                    self.save(next);
+                    return Ok(lhs);
+                }
+            }
+        }
+
+        Ok(lhs)
+    }
+
+    fn parse_call_arguments(&mut self) -> Result<Vec<Expression>, ParserError> {
+        let next = self.next()?.ok_or_else(|| self.bad_eof(
+          "looking for open paren for function arguments"))?;
+
+        if !matches!(next.token, Token::OpenParen) {
+            return Err(ParserError::UnexpectedToken {
+              file_id: self.file_id,
+              span: next.span,
+              token: next.token,
+              expected: "open paren for call arguments",
+            });
+        }
+
+        let mut args = vec![]; 
+
+        loop {
+            let next = self.next()?.ok_or_else(|| self.bad_eof(
+              "looking for an expression or close paren in function arguments"))?;
+
+            if matches!(next.token, Token::CloseParen) {
+                break;
+            }
+
+            self.save(next);
+            let argument = self.parse_infix(0)?;
+            args.push(argument);
+
+            let next = self.next()?.ok_or_else(|| self.bad_eof(
+              "looking for comma or close paren in function arguments"))?;
+            match next.token {
+                Token::Comma => continue,
+                Token::CloseParen => break,
+                _ => return Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: next.span,
+                    token: next.token,
+                    expected: "comma or close paren in function arguments",
+                }),
+            }
+        }
+
+        Ok(args)
     }
 
     pub fn parse_base_expression(&mut self) -> Result<Expression, ParserError> {
