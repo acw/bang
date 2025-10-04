@@ -1,5 +1,6 @@
+use crate::syntax::error::ParserError;
 use crate::syntax::parse::Parser;
-use crate::syntax::tokens::Lexer;
+use crate::syntax::tokens::{Lexer, Token};
 use crate::syntax::*;
 
 #[test]
@@ -513,9 +514,7 @@ fn structure_value() {
                 f2.as_printed() == "bar" &&
                 matches!(v1, Expression::Value(ConstantValue::Integer(_,_))) &&
                 matches!(v2, Expression::Value(ConstantValue::String(_,_))))));
-    assert!(matches!(
-      parse_st("Foo{ foo: 1,, bar: \"foo\", }"),
-      Err(_)));
+    assert!(matches!(parse_st("Foo{ foo: 1,, bar: \"foo\", }"), Err(_)));
 }
 
 #[test]
@@ -527,7 +526,6 @@ fn infix_and_precedence() {
         result.add_infix_precedence("*", parse::Associativity::Right, 7);
         result.parse_expression()
     };
-
 
     assert!(matches!(
       parse_ex("0"),
@@ -659,15 +657,9 @@ fn calls() {
           Expression::Reference(a),
           Expression::Reference(b),
         ] if a.as_printed() == "a" && b.as_printed() == "b")));
-    assert!(matches!(
-      parse_ex("f(,a,b,)"),
-      Err(_)));
-    assert!(matches!(
-      parse_ex("f(a,,b,)"),
-      Err(_)));
-    assert!(matches!(
-      parse_ex("f(a,b,,)"),
-      Err(_)));
+    assert!(matches!(parse_ex("f(,a,b,)"), Err(_)));
+    assert!(matches!(parse_ex("f(a,,b,)"), Err(_)));
+    assert!(matches!(parse_ex("f(a,b,,)"), Err(_)));
 
     assert!(matches!(
       parse_ex("f()()"),
@@ -749,23 +741,190 @@ fn calls() {
            matches!(v2, ConstantValue::Integer(_, IntegerWithBase{ value: 2, .. }))))));
 
     assert!(matches!(
-      parse_ex("a + b(2 + 3) * c"),
-      Ok(Expression::Call(plus, CallKind::Infix, pargs)) if
+    parse_ex("a + b(2 + 3) * c"),
+    Ok(Expression::Call(plus, CallKind::Infix, pargs)) if
+     matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+     matches!(pargs.as_slice(), [
+      Expression::Reference(a),
+      Expression::Call(times, CallKind::Infix, targs)
+    ] if a.as_printed() == "a" &&
+     matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+     matches!(targs.as_slice(), [
+       Expression::Call(b, CallKind::Normal, bargs),
+       Expression::Reference(c),
+     ] if c.as_printed() == "c" &&
+      matches!(b.as_ref(), Expression::Reference(n) if n.as_printed() == "b") &&
+      matches!(bargs.as_slice(), [Expression::Call(plus, CallKind::Infix, pargs)] if
        matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
        matches!(pargs.as_slice(), [
-        Expression::Reference(a),
-        Expression::Call(times, CallKind::Infix, targs)
-      ] if a.as_printed() == "a" &&
-       matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
-       matches!(targs.as_slice(), [
-         Expression::Call(b, CallKind::Normal, bargs),
-         Expression::Reference(c),
-       ] if c.as_printed() == "c" &&
-        matches!(b.as_ref(), Expression::Reference(n) if n.as_printed() == "b") &&
-        matches!(bargs.as_slice(), [Expression::Call(plus, CallKind::Infix, pargs)] if
-         matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
-         matches!(pargs.as_slice(), [
-           Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: 2, .. })),
-           Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: 3, .. }))
-         ]))))));
+         Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: 2, .. })),
+         Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: 3, .. }))
+       ]))))));
+}
+
+#[test]
+fn prefix_and_postfix() {
+    let parse_ex = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new(0, lexer);
+        result.add_infix_precedence("+", parse::Associativity::Left, 4);
+        result.add_infix_precedence("*", parse::Associativity::Left, 8);
+        result.add_prefix_precedence("++", 6);
+        result.add_postfix_precedence("++", 6);
+        result.add_prefix_precedence("--", 7);
+        result.add_postfix_precedence("--", 7);
+        result.parse_expression()
+    };
+
+    assert!(matches!(
+     parse_ex("++a"),
+     Ok(Expression::Call(pp, CallKind::Prefix, args)) if
+      matches!(pp.as_ref(), Expression::Reference(n) if n.as_printed() == "++") &&
+      matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a")));
+
+    assert!(matches!(
+     parse_ex("a--"),
+     Ok(Expression::Call(pp, CallKind::Postfix, args)) if
+      matches!(pp.as_ref(), Expression::Reference(n) if n.as_printed() == "--") &&
+      matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a")));
+
+    // the prefix is weaker than the postfix, so it should be the outside
+    // operatotr
+    assert!(matches!(
+     parse_ex("++a--"),
+     Ok(Expression::Call(pp, CallKind::Prefix, args)) if
+      matches!(pp.as_ref(), Expression::Reference(n) if n.as_printed() == "++") &&
+      matches!(args.as_slice(), [Expression::Call(mm, CallKind::Postfix, args)] if
+        matches!(mm.as_ref(), Expression::Reference(n) if n.as_printed() == "--") &&
+        matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a"))));
+
+    // the prefix is stronger than the postfix, so it should be the inside
+    // operator
+    assert!(matches!(
+     parse_ex("--a++"),
+     Ok(Expression::Call(pp, CallKind::Postfix, args)) if
+      matches!(pp.as_ref(), Expression::Reference(n) if n.as_printed() == "++") &&
+      matches!(args.as_slice(), [Expression::Call(mm, CallKind::Prefix, args)] if
+        matches!(mm.as_ref(), Expression::Reference(n) if n.as_printed() == "--") &&
+        matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a"))));
+
+    assert!(matches!(
+     parse_ex("a++ + b"),
+     Ok(Expression::Call(p, CallKind::Infix, args)) if
+      matches!(p.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+      matches!(args.as_slice(), [
+        Expression::Call(mm, CallKind::Postfix, args),
+        Expression::Reference(n)
+      ] if n.as_printed() == "b" &&
+        matches!(mm.as_ref(), Expression::Reference(n) if n.as_printed() == "++") &&
+        matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a"))));
+
+    assert!(matches!(
+     parse_ex("a + ++ b"),
+     Ok(Expression::Call(p, CallKind::Infix, args)) if
+      matches!(p.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+      matches!(args.as_slice(), [
+        Expression::Reference(n),
+        Expression::Call(mm, CallKind::Prefix, args),
+      ] if n.as_printed() == "a" &&
+        matches!(mm.as_ref(), Expression::Reference(n) if n.as_printed() == "++") &&
+        matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "b"))));
+
+    assert!(matches!(
+     parse_ex("a * ++ b"),
+     Err(ParserError::UnexpectedToken{ token: Token::OperatorName(pp), .. })
+      if pp == "++"));
+}
+
+#[test]
+fn blocks() {
+    let parse_ex = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new(0, lexer);
+        result.parse_expression()
+    };
+
+    assert!(matches!(
+     parse_ex("{}"),
+     Ok(Expression::Block(_, void)) if
+      matches!(void.as_slice(), [Statement::Expression(call)] if
+       matches!(call, Expression::Call(void, CallKind::Normal, vargs) if
+        matches!(void.as_ref(), Expression::Reference(n) if
+          n.as_printed() == "%prim%void") &&
+        vargs.is_empty()))));
+    assert!(matches!(
+     parse_ex("{ x }"),
+     Ok(Expression::Block(_, x)) if
+      matches!(x.as_slice(), [Statement::Expression(Expression::Reference(n))] if
+       n.as_printed() == "x")));
+    assert!(matches!(
+     parse_ex("{ x; }"),
+     Ok(Expression::Block(_, x)) if
+      matches!(x.as_slice(), [
+        Statement::Expression(Expression::Reference(n)),
+        Statement::Expression(Expression::Call(primv, CallKind::Normal, vargs)),
+      ] if n.as_printed() == "x" && vargs.is_empty() &&
+       matches!(primv.as_ref(), Expression::Reference(n) if
+        n.as_printed() == "%prim%void"))));
+    assert!(matches!(
+     parse_ex("{ x; y }"),
+     Ok(Expression::Block(_, x)) if
+      matches!(x.as_slice(), [
+        Statement::Expression(Expression::Reference(x)),
+        Statement::Expression(Expression::Reference(y)),
+      ] if x.as_printed() == "x" && y.as_printed() == "y")));
+}
+
+#[test]
+fn bindings() {
+    let parse_ex = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new(0, lexer);
+        result.parse_expression()
+    };
+
+    assert!(matches!(
+     parse_ex("{ let x = y; }"),
+     Ok(Expression::Block(_, x)) if
+      matches!(x.as_slice(), [Statement::Binding(b), Statement::Expression(_)] if
+       !b.mutable &&
+       b.variable.as_printed() == "x" &&
+       matches!(b.value, Expression::Reference(ref n) if n.as_printed() == "y"))));
+}
+
+#[test]
+fn conditionals() {
+    let parse_ex = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new(0, lexer);
+        result.parse_expression()
+    };
+
+    assert!(matches!(
+     parse_ex("if x { y } else { z }"),
+     Ok(Expression::Conditional(cond)) if
+      matches!(cond.test.as_ref(), Expression::Reference(n) if n.as_printed() == "x") &&
+      matches!(cond.consequent.as_ref(), Expression::Block(_, cs) if
+       matches!(cs.as_slice(), [Statement::Expression(Expression::Reference(n))] if
+        n.as_printed() == "y")) &&
+      matches!(cond.alternative.as_ref(), Some(expr) if
+       matches!(expr.as_ref(), Expression::Block(_, ast) if
+        matches!(ast.as_slice(), [Statement::Expression(Expression::Reference(n))] if
+         n.as_printed() == "z")))));
+
+    assert!(matches!(
+     parse_ex("if x { y }"),
+     Ok(Expression::Conditional(cond)) if
+      matches!(cond.test.as_ref(), Expression::Reference(n) if n.as_printed() == "x") &&
+      matches!(cond.consequent.as_ref(), Expression::Block(_, cs) if
+       matches!(cs.as_slice(), [Statement::Expression(Expression::Reference(n))] if
+        n.as_printed() == "y")) &&
+       cond.alternative.is_none()));
+
+    assert!(matches!(parse_ex("if x v { z }"), Err(_)));
+
+    assert!(matches!(
+     parse_ex("if x + y { z }"),
+     Ok(Expression::Conditional(cond)) if
+      matches!(cond.test.as_ref(), Expression::Call(_, CallKind::Infix, _))));
 }

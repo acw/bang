@@ -1,4 +1,4 @@
-use crate::syntax::{Located, Location};
+use crate::syntax::Location;
 use std::cmp;
 use std::fmt;
 use std::hash;

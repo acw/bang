@@ -476,10 +476,33 @@ impl<'a> LexerState<'a> {
                 token: Token::OperatorName("-".into()),
                 span: token_start_offset..token_start_offset + 1,
             })),
-            Some((end, '>')) => Ok(Some(LocatedToken {
-                token: Token::Arrow,
-                span: token_start_offset..end,
-            })),
+            Some((end, '>')) => {
+                let Some((pbloc, peekaboo)) = self.next_char() else {
+                    return Ok(Some(LocatedToken {
+                        token: Token::Arrow,
+                        span: token_start_offset..end,
+                    }));
+                };
+                let is_operator = !peekaboo.is_alphanumeric()
+                    && !peekaboo.is_whitespace()
+                    && !peekaboo.is_control();
+
+                if is_operator {
+                    self.parse_identifier(
+                        token_start_offset,
+                        format!("->{peekaboo}"),
+                        |c| !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control(),
+                        Token::OperatorName,
+                    )
+                } else {
+                    self.stash_char(pbloc, peekaboo);
+
+                    Ok(Some(LocatedToken {
+                        token: Token::Arrow,
+                        span: token_start_offset..end,
+                    }))
+                }
+            }
             Some((_, c)) if !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control() => self
                 .parse_identifier(
                     token_start_offset,
@@ -664,4 +687,23 @@ fn can_separate_pieces() {
     assert_eq!(Some(Token::OperatorName("-".into())), next_token());
     assert_eq!(Some(Token::ValueName("b".into())), next_token());
     assert_eq!(None, next_token());
+}
+
+#[test]
+fn arrow_requires_nonop() {
+    let mut lexer = Lexer::from("->");
+    let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").token);
+    assert_eq!(Some(Token::Arrow), next_token());
+
+    let mut lexer = Lexer::from("->*");
+    let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").token);
+    assert_eq!(Some(Token::OperatorName("->*".into())), next_token());
+
+    let mut lexer = Lexer::from("->*x");
+    let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").token);
+    assert_eq!(Some(Token::OperatorName("->*".into())), next_token());
+
+    let mut lexer = Lexer::from("->x");
+    let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").token);
+    assert_eq!(Some(Token::Arrow), next_token());
 }

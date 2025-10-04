@@ -7,7 +7,9 @@ pub struct Parser<'a> {
     file_id: usize,
     lexer: Lexer<'a>,
     known_tokens: Vec<LocatedToken>,
-    precedence_table: HashMap<String, (u8, u8)>,
+    prefix_precedence_table: HashMap<String, u8>,
+    infix_precedence_table: HashMap<String, (u8, u8)>,
+    postfix_precedence_table: HashMap<String, u8>,
 }
 
 pub enum Associativity {
@@ -20,7 +22,7 @@ impl<'a> Parser<'a> {
     /// Create a new parser from the given file index and lexer.
     ///
     /// The file index will be used for annotating locations and for
-    /// error messages. If you don't care about either, you can use 
+    /// error messages. If you don't care about either, you can use
     /// 0 with no loss of functionality. (Obviously, it will be harder
     /// to create quality error messages, but you already knew that.)
     pub fn new(file_id: usize, lexer: Lexer<'a>) -> Parser<'a> {
@@ -28,7 +30,9 @@ impl<'a> Parser<'a> {
             file_id,
             lexer,
             known_tokens: vec![],
-            precedence_table: HashMap::new(),
+            prefix_precedence_table: HashMap::new(),
+            infix_precedence_table: HashMap::new(),
+            postfix_precedence_table: HashMap::new(),
         }
     }
 
@@ -38,7 +42,7 @@ impl<'a> Parser<'a> {
         &mut self,
         operator: S,
         associativity: Associativity,
-        level: u8
+        level: u8,
     ) {
         let actual_associativity = match associativity {
             Associativity::Left => (level * 2, (level * 2) + 1),
@@ -46,11 +50,22 @@ impl<'a> Parser<'a> {
             Associativity::None => (level * 2, level * 2),
         };
 
-        self.precedence_table.insert(operator.to_string(), actual_associativity);
+        self.infix_precedence_table
+            .insert(operator.to_string(), actual_associativity);
+    }
+
+    pub fn add_prefix_precedence<S: ToString>(&mut self, operator: S, level: u8) {
+        self.prefix_precedence_table
+            .insert(operator.to_string(), level * 2);
+    }
+
+    pub fn add_postfix_precedence<S: ToString>(&mut self, operator: S, level: u8) {
+        self.postfix_precedence_table
+            .insert(operator.to_string(), level * 2);
     }
 
     fn get_precedence(&self, name: &String) -> (u8, u8) {
-        match self.precedence_table.get(name) {
+        match self.infix_precedence_table.get(name) {
             None => (19, 20),
             Some(x) => *x,
         }
@@ -588,14 +603,17 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_expression(&mut self) -> Result<Expression, ParserError> {
-        let next = self.next()?.ok_or_else(||
-            self.bad_eof("looking for an expression"))?;
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for an expression"))?;
 
         self.save(next.clone());
         match next.token {
             Token::ValueName(x) if x == "match" => self.parse_match_expression(),
-            Token::ValueName(x) if x == "if" => self.parse_if_expression(),
-            _ => self.parse_infix(0),
+            Token::ValueName(x) if x == "if" => {
+                Ok(Expression::Conditional(self.parse_if_expression()?))
+            }
+            _ => self.parse_arithmetic(0),
         }
     }
 
@@ -603,12 +621,244 @@ impl<'a> Parser<'a> {
         unimplemented!()
     }
 
-    pub fn parse_if_expression(&mut self) -> Result<Expression, ParserError> {
-        unimplemented!()
+    pub fn parse_if_expression(&mut self) -> Result<ConditionalExpr, ParserError> {
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for an 'if' to start conditional"))?;
+        if !matches!(next.token, Token::ValueName(ref x) if x == "if") {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: next.span,
+                token: next.token,
+                expected: "an 'if' to start a conditional",
+            });
+        }
+        let start = self.to_location(next.span);
+
+        let test = self.parse_arithmetic(0)?;
+        let consequent = self.parse_block()?;
+
+        let maybe_else = self.next()?;
+        let (alternative, location) = match maybe_else {
+            Some(LocatedToken {
+                token: Token::ValueName(ref n),
+                ..
+            }) if n == "else" => {
+                let expr = self.parse_block()?;
+                let location = match expr {
+                    Expression::Block(ref l, _) => l.clone(),
+                    _ => panic!("How did parse_block not return a block?!"),
+                };
+
+                (Some(Box::new(expr)), location)
+            }
+
+            _ => {
+                let location = match consequent {
+                    Expression::Block(ref l, _) => l.clone(),
+                    _ => panic!("How did parse_block not return a block?!"),
+                };
+
+                (None, location)
+            }
+        };
+
+        Ok(ConditionalExpr {
+            location,
+            test: Box::new(test),
+            consequent: Box::new(consequent),
+            alternative,
+        })
     }
 
-    pub fn parse_infix(&mut self, level: u8) -> Result<Expression, ParserError> {
-        let mut lhs = self.parse_base_expression()?;
+    pub fn parse_block(&mut self) -> Result<Expression, ParserError> {
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for open brace to start block"))?;
+        if !matches!(next.token, Token::OpenBrace) {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: next.span,
+                token: next.token,
+                expected: "an open brace to start a block",
+            });
+        }
+        let start = self.to_location(next.span);
+
+        let mut statements = vec![];
+        let mut ended_with_expr = false;
+
+        while let Some((stmt, terminal)) = self.parse_statement()? {
+            statements.push(stmt);
+            if terminal {
+                ended_with_expr = true;
+                break;
+            }
+        }
+
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for statement or block close"))?;
+        if !matches!(next.token, Token::CloseBrace) {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: next.span,
+                token: next.token,
+                expected: "a close brace to end a block",
+            });
+        }
+        let end = self.to_location(next.span);
+
+        if !ended_with_expr {
+            let void_name = Name::new(end.clone(), "%prim%void");
+            let void_ref = Expression::Reference(void_name);
+            let void_call = Expression::Call(Box::new(void_ref), CallKind::Normal, vec![]);
+            statements.push(Statement::Expression(void_call));
+        }
+
+        Ok(Expression::Block(start.extend_to(&end), statements))
+    }
+
+    pub fn parse_statement(&mut self) -> Result<Option<(Statement, bool)>, ParserError> {
+        loop {
+            let next = self
+                .next()?
+                .ok_or_else(|| self.bad_eof("looking for a statement or close brace"))?;
+
+            match next.token {
+                Token::CloseBrace => {
+                    self.save(next);
+                    return Ok(None);
+                }
+
+                Token::ValueName(ref l) if l == "let" => {
+                    self.save(next);
+                    return Ok(Some((Statement::Binding(self.parse_let()?), false)));
+                }
+
+                _ => {
+                    self.save(next);
+                    let expr = Statement::Expression(self.parse_expression()?);
+
+                    let next = self
+                        .next()?
+                        .ok_or_else(|| self.bad_eof("looking for semicolon or close brace"))?;
+
+                    if matches!(next.token, Token::Semi) {
+                        return Ok(Some((expr, false)));
+                    } else {
+                        self.save(next);
+                        return Ok(Some((expr, true)));
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn parse_let(&mut self) -> Result<BindingStmt, ParserError> {
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for a let for a binding statement"))?;
+        if !matches!(next.token, Token::ValueName(ref n) if n == "let") {
+            self.save(next.clone());
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: next.span,
+                token: next.token,
+                expected: "a 'let' to open a binding statement",
+            });
+        }
+        let start = self.to_location(next.span);
+
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("'mut' or a variable name"))?;
+        let mutable = matches!(next.token, Token::ValueName(ref n) if n == "mut");
+        if !mutable {
+            self.save(next);
+        }
+
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("a variable name"))?;
+        let variable = match next.token {
+            Token::ValueName(v) => Name::new(self.to_location(next.span), v),
+            _ => {
+                return Err(ParserError::UnexpectedToken {
+                    file_id: self.file_id,
+                    span: next.span,
+                    token: next.token,
+                    expected: "a variable name for the let binding",
+                });
+            }
+        };
+
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("an '=' after a variable name in a binding"))?;
+        if !matches!(next.token, Token::OperatorName(ref x) if x == "=") {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: next.span,
+                token: next.token,
+                expected: "an '=' after the variable name in a let binding",
+            });
+        }
+
+        let value = self.parse_expression()?;
+
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for terminal semicolon for let statement"))?;
+        if !matches!(next.token, Token::Semi) {
+            return Err(ParserError::UnexpectedToken {
+                file_id: self.file_id,
+                span: next.span,
+                token: next.token,
+                expected: "a semicolon to finish a let statement",
+            });
+        }
+        let end = self.to_location(next.span);
+
+        Ok(BindingStmt {
+            location: start.extend_to(&end),
+            mutable,
+            variable,
+            value,
+        })
+    }
+
+    pub fn parse_arithmetic(&mut self, level: u8) -> Result<Expression, ParserError> {
+        // start by checking for prefix operators.
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for arithmetic expression"))?;
+
+        let mut lhs = if let Token::OperatorName(ref n) = next.token {
+            if let Some(pre_prec) = self.prefix_precedence_table.get(n) {
+                if *pre_prec < level {
+                    self.save(next.clone());
+                    return Err(ParserError::UnexpectedToken {
+                        file_id: self.file_id,
+                        span: next.span,
+                        token: next.token,
+                        expected: "a base expression of a tighter-binding prefix operator",
+                    });
+                }
+
+                let rhs = self.parse_arithmetic(*pre_prec)?;
+                let opname = Name::new(self.to_location(next.span), n);
+                let op_expr = Expression::Reference(opname);
+
+                Expression::Call(Box::new(op_expr), CallKind::Prefix, vec![rhs])
+            } else {
+                self.save(next);
+                self.parse_base_expression()?
+            }
+        } else {
+            self.save(next);
+            self.parse_base_expression()?
+        };
 
         loop {
             let Some(next) = self.next()? else {
@@ -621,7 +871,21 @@ impl<'a> Parser<'a> {
                     let args = self.parse_call_arguments()?;
                     lhs = Expression::Call(Box::new(lhs), CallKind::Normal, args);
                 }
+
                 Token::OperatorName(ref n) => {
+                    if let Some(postprec) = self.postfix_precedence_table.get(n) {
+                        if *postprec < level {
+                            self.save(next);
+                            break;
+                        }
+
+                        let opname = Name::new(self.to_location(next.span), n);
+                        let op_expr = Expression::Reference(opname);
+
+                        lhs = Expression::Call(Box::new(op_expr), CallKind::Postfix, vec![lhs]);
+                        continue;
+                    }
+
                     let (left_pr, right_pr) = self.get_precedence(&n);
 
                     if left_pr < level {
@@ -629,13 +893,14 @@ impl<'a> Parser<'a> {
                         break;
                     }
 
-                    let rhs = self.parse_infix(right_pr)?;
+                    let rhs = self.parse_arithmetic(right_pr)?;
                     let name = Name::new(self.to_location(next.span), n);
                     let opref = Box::new(Expression::Reference(name));
                     let args = vec![lhs, rhs];
 
                     lhs = Expression::Call(opref, CallKind::Infix, args);
                 }
+
                 _ => {
                     self.save(next);
                     return Ok(lhs);
@@ -647,43 +912,48 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_call_arguments(&mut self) -> Result<Vec<Expression>, ParserError> {
-        let next = self.next()?.ok_or_else(|| self.bad_eof(
-          "looking for open paren for function arguments"))?;
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for open paren for function arguments"))?;
 
         if !matches!(next.token, Token::OpenParen) {
             return Err(ParserError::UnexpectedToken {
-              file_id: self.file_id,
-              span: next.span,
-              token: next.token,
-              expected: "open paren for call arguments",
+                file_id: self.file_id,
+                span: next.span,
+                token: next.token,
+                expected: "open paren for call arguments",
             });
         }
 
-        let mut args = vec![]; 
+        let mut args = vec![];
 
         loop {
-            let next = self.next()?.ok_or_else(|| self.bad_eof(
-              "looking for an expression or close paren in function arguments"))?;
+            let next = self.next()?.ok_or_else(|| {
+                self.bad_eof("looking for an expression or close paren in function arguments")
+            })?;
 
             if matches!(next.token, Token::CloseParen) {
                 break;
             }
 
             self.save(next);
-            let argument = self.parse_infix(0)?;
+            let argument = self.parse_arithmetic(0)?;
             args.push(argument);
 
-            let next = self.next()?.ok_or_else(|| self.bad_eof(
-              "looking for comma or close paren in function arguments"))?;
+            let next = self.next()?.ok_or_else(|| {
+                self.bad_eof("looking for comma or close paren in function arguments")
+            })?;
             match next.token {
                 Token::Comma => continue,
                 Token::CloseParen => break,
-                _ => return Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
-                    span: next.span,
-                    token: next.token,
-                    expected: "comma or close paren in function arguments",
-                }),
+                _ => {
+                    return Err(ParserError::UnexpectedToken {
+                        file_id: self.file_id,
+                        span: next.span,
+                        token: next.token,
+                        expected: "comma or close paren in function arguments",
+                    });
+                }
             }
         }
 
@@ -700,7 +970,10 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.bad_eof("looking for an expression"))?;
 
         match next.token {
-            Token::OpenBrace => unimplemented!(),
+            Token::OpenBrace => {
+                self.save(next);
+                return self.parse_block();
+            }
 
             Token::OpenParen => {
                 let inner = self.parse_expression()?;

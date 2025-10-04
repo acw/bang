@@ -110,13 +110,14 @@ pub enum ExportClass {
 #[derive(Debug)]
 pub enum Statement {
     Binding(BindingStmt),
+    Expression(Expression),
 }
 
 #[derive(Debug)]
 pub struct BindingStmt {
     location: Location,
     mutable: bool,
-    variable: String,
+    variable: Name,
     value: Expression,
 }
 
@@ -126,7 +127,17 @@ pub enum Expression {
     Reference(Name),
     EnumerationValue(Name, Name, Option<Box<Expression>>),
     StructureValue(Name, Vec<FieldValue>),
+    Conditional(ConditionalExpr),
     Call(Box<Expression>, CallKind, Vec<Expression>),
+    Block(Location, Vec<Statement>),
+}
+
+#[derive(Debug)]
+pub struct ConditionalExpr {
+    location: Location,
+    test: Box<Expression>,
+    consequent: Box<Expression>,
+    alternative: Option<Box<Expression>>,
 }
 
 #[derive(Debug)]
