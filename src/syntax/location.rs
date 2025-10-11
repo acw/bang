@@ -1,6 +1,8 @@
-use codespan_reporting::diagnostic::Label;
+use ariadne::Span;
+use internment::ArcIntern;
 use std::cmp::{max, min};
 use std::ops::Range;
+use std::path::PathBuf;
 
 pub trait Located {
     fn location(&self) -> Location;
@@ -8,19 +10,35 @@ pub trait Located {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Location {
-    file_id: usize,
+    file: ArcIntern<PathBuf>,
     span: Range<usize>,
 }
 
+impl Span for Location {
+    type SourceId = ArcIntern<PathBuf>;
+
+    fn source(&self) -> &Self::SourceId {
+        &self.file
+    }
+
+    fn start(&self) -> usize {
+        self.span.start
+    }
+
+    fn end(&self) -> usize {
+        self.span.end
+    }
+}
+
 impl Location {
-    pub fn new(file_id: usize, span: Range<usize>) -> Self {
-        Location { file_id, span }
+    pub fn new(file: &ArcIntern<PathBuf>, span: Range<usize>) -> Self {
+        Location { file: file.clone(), span }
     }
 
     pub fn extend_to(&self, other: &Location) -> Location {
-        assert_eq!(self.file_id, other.file_id);
+        assert_eq!(self.file, other.file);
         Location {
-            file_id: self.file_id,
+            file: self.file.clone(),
             span: min(self.span.start, other.span.start)..max(self.span.end, other.span.end),
         }
     }
@@ -30,19 +48,11 @@ impl Location {
         self
     }
 
-    pub fn file_id(&self) -> usize {
-        self.file_id
+    pub fn file(&self) -> &str {
+        self.file.to_str().unwrap_or("<bad_name>")
     }
 
     pub fn span(&self) -> Range<usize> {
         self.span.clone()
-    }
-
-    pub fn primary_label(&self) -> Label<usize> {
-        Label::primary(self.file_id, self.span.clone())
-    }
-
-    pub fn secondary_label(&self) -> Label<usize> {
-        Label::secondary(self.file_id, self.span.clone())
     }
 }

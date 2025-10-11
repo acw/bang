@@ -1,23 +1,34 @@
 //use codespan_reporting::diagnostic::{Diagnostic, Label};
 use crate::syntax::tokens::Token;
 use std::ops::Range;
+use std::path::PathBuf;
+use internment::ArcIntern;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ParserError {
-    #[error("Lexer error at {file_id}: {error}")]
-    LexerError { file_id: usize, error: LexerError },
+    #[error("Lexer error at {file}: {error}")]
+    LexerError { file: ArcIntern<PathBuf>, error: LexerError },
 
-    #[error("Unacceptable end of file at {file_id} while {place}")]
-    UnacceptableEof { file_id: usize, place: &'static str },
+    #[error("Unacceptable end of file at {file} while {place}")]
+    UnacceptableEof { file: ArcIntern<PathBuf>, place: &'static str },
 
-    #[error("Unexpected token at {file_id}: expected {expected}, saw {token}")]
+    #[error("Unexpected token at {file}: expected {expected}, saw {token}")]
     UnexpectedToken {
-        file_id: usize,
+        file: ArcIntern<PathBuf>,
         span: Range<usize>,
         token: Token,
         expected: &'static str,
     },
+
+    #[error("Unexpected problem opening file {file}: {error}")]
+    OpenError { file: String, error: std::io::Error },
+
+    #[error("Unexpected problem reading file {file}: {error}")]
+    ReadError { file: String, error: std::io::Error },
+
+    #[error("UTF-8 problem reading file {file}: {error}")]
+    Utf8Error { file: String, error: std::str::Utf8Error },
 }
 
 #[derive(Clone, Debug, Error, PartialEq)]

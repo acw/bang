@@ -1,11 +1,12 @@
 use crate::syntax::error::ParserError;
 use crate::syntax::tokens::{Lexer, LocatedToken, Token};
 use crate::syntax::*;
+use internment::ArcIntern;
 use std::collections::HashMap;
 
-pub struct Parser<'a> {
-    file_id: usize,
-    lexer: Lexer<'a>,
+pub struct Parser<'lexer> {
+    file: ArcIntern<PathBuf>,
+    lexer: Lexer<'lexer>,
     known_tokens: Vec<LocatedToken>,
     prefix_precedence_table: HashMap<String, u8>,
     infix_precedence_table: HashMap<String, (u8, u8)>,
@@ -18,16 +19,19 @@ pub enum Associativity {
     None,
 }
 
-impl<'a> Parser<'a> {
+impl<'lexer> Parser<'lexer> {
     /// Create a new parser from the given file index and lexer.
     ///
     /// The file index will be used for annotating locations and for
     /// error messages. If you don't care about either, you can use
     /// 0 with no loss of functionality. (Obviously, it will be harder
     /// to create quality error messages, but you already knew that.)
-    pub fn new(file_id: usize, lexer: Lexer<'a>) -> Parser<'a> {
+    pub fn new<P: AsRef<Path>>(
+        file: P,
+        lexer: Lexer<'lexer>
+    ) -> Parser<'lexer> {
         Parser {
-            file_id,
+            file: ArcIntern::new(file.as_ref().to_path_buf()),
             lexer,
             known_tokens: vec![],
             prefix_precedence_table: HashMap::new(),
@@ -82,7 +86,7 @@ impl<'a> Parser<'a> {
                 .next()
                 .transpose()
                 .map_err(|error| ParserError::LexerError {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     error,
                 })
         }
@@ -94,13 +98,13 @@ impl<'a> Parser<'a> {
 
     fn bad_eof(&mut self, place: &'static str) -> ParserError {
         ParserError::UnacceptableEof {
-            file_id: self.file_id,
+            file: self.file.clone(),
             place,
         }
     }
 
     fn to_location(&self, span: Range<usize>) -> Location {
-        Location::new(self.file_id, span)
+        Location::new(&self.file, span)
     }
 
     pub fn parse_module(&mut self) -> Result<Module, ParserError> {
@@ -161,7 +165,7 @@ impl<'a> Parser<'a> {
 
         if !matches!(maybe_paren.token, Token::OpenParen) {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: maybe_paren.span,
                 token: maybe_paren.token,
                 expected: "open parenthesis, following the restrict keyword",
@@ -179,7 +183,7 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.bad_eof("Looking for open paren after restrict"))?;
         if !matches!(maybe_paren.token, Token::CloseParen) {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: maybe_paren.span,
                 token: maybe_paren.token,
                 expected: "close parenthesis following type restrictions",
@@ -212,7 +216,7 @@ impl<'a> Parser<'a> {
 
             weird => {
                 return Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span: maybe_constructor.span,
                     token: weird,
                     expected: "Constructor name, comma, or close parenthesis in type restriction",
@@ -261,7 +265,7 @@ impl<'a> Parser<'a> {
         }
 
         Err(ParserError::UnexpectedToken {
-            file_id: self.file_id,
+            file: self.file.clone(),
             span: next.span,
             token: next.token,
             expected: "'structure', 'enumeration', or a value identifier",
@@ -274,7 +278,7 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.bad_eof("looking for definition"))?;
         if !matches!(structure_token.token, Token::ValueName(ref s) if s == "structure") {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: structure_token.span,
                 token: structure_token.token,
                 expected: "the 'structure' keyword",
@@ -288,7 +292,7 @@ impl<'a> Parser<'a> {
             Token::TypeName(str) => str,
             _ => {
                 return Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span: name.span,
                     token: name.token,
                     expected: "a structure name",
@@ -301,7 +305,7 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.bad_eof("the open brace after a structure name"))?;
         if !matches!(brace.token, Token::OpenBrace) {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: brace.span,
                 token: brace.token,
                 expected: "the brace after a structure name",
@@ -319,7 +323,7 @@ impl<'a> Parser<'a> {
         })?;
         if !matches!(brace.token, Token::CloseBrace) {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: brace.span,
                 token: brace.token,
                 expected: "the brace at the end of a structure definition",
@@ -355,7 +359,7 @@ impl<'a> Parser<'a> {
         })?;
         if !matches!(maybe_colon.token, Token::Colon) {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: maybe_colon.span,
                 token: maybe_colon.token,
                 expected: "colon after field name in constructor",
@@ -388,7 +392,7 @@ impl<'a> Parser<'a> {
                     return Ok(None);
                 } else {
                     return Err(ParserError::UnexpectedToken {
-                        file_id: self.file_id,
+                        file: self.file.clone(),
                         span: maybe_name.span,
                         token: maybe_name.token,
                         expected: "a field name",
@@ -412,7 +416,7 @@ impl<'a> Parser<'a> {
 
             _ => {
                 return Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span: maybe_colon.span,
                     token: maybe_colon.token,
                     expected: "colon, comma, or close brace after field name",
@@ -432,7 +436,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 return Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span: end_token.span,
                     token: end_token.token,
                     expected: "looking for comma or close brace after field definition",
@@ -459,7 +463,7 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.bad_eof("looking for definition"))?;
         if !matches!(enumeration_token.token, Token::ValueName(ref e) if e == "enumeration") {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: enumeration_token.span,
                 token: enumeration_token.token,
                 expected: "the 'enumeration' keyword",
@@ -473,7 +477,7 @@ impl<'a> Parser<'a> {
             Token::TypeName(str) => str,
             _ => {
                 return Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span: name.span,
                     token: name.token,
                     expected: "an enumeration name",
@@ -486,7 +490,7 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.bad_eof("the open brace after an enumeration name"))?;
         if !matches!(brace.token, Token::OpenBrace) {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: brace.span,
                 token: brace.token,
                 expected: "the brace after an enumeration name",
@@ -504,7 +508,7 @@ impl<'a> Parser<'a> {
         })?;
         if !matches!(brace.token, Token::CloseBrace) {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: brace.span,
                 token: brace.token,
                 expected: "the brace at the end of an enumeration definition",
@@ -535,7 +539,7 @@ impl<'a> Parser<'a> {
             _ => {
                 self.save(maybe_name.clone());
                 return Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span: maybe_name.span,
                     token: maybe_name.token,
                     expected: "variant name (identifier starting with a capital)",
@@ -555,7 +559,7 @@ impl<'a> Parser<'a> {
                 .ok_or_else(|| self.bad_eof("trying to parse a enumeration variant's type"))?;
             if !matches!(maybe_close.token, Token::CloseParen) {
                 return Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span: maybe_close.span,
                     token: maybe_close.token,
                     expected: "close paren to end an enumeration variant's type argument",
@@ -581,7 +585,7 @@ impl<'a> Parser<'a> {
             _ => {
                 self.save(ender.clone());
                 return Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span: ender.span,
                     token: ender.token,
                     expected: "comma or close brace after enumeration variant",
@@ -598,7 +602,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    pub fn parse_function_or_value(&mut self) -> Result<Def, ParserError> {
+    fn parse_function_or_value(&mut self) -> Result<Def, ParserError> {
         unimplemented!()
     }
 
@@ -617,17 +621,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_match_expression(&mut self) -> Result<Expression, ParserError> {
+    fn parse_match_expression(&mut self) -> Result<Expression, ParserError> {
         unimplemented!()
     }
 
-    pub fn parse_if_expression(&mut self) -> Result<ConditionalExpr, ParserError> {
+    fn parse_if_expression(&mut self) -> Result<ConditionalExpr, ParserError> {
         let next = self
             .next()?
             .ok_or_else(|| self.bad_eof("looking for an 'if' to start conditional"))?;
         if !matches!(next.token, Token::ValueName(ref x) if x == "if") {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: next.span,
                 token: next.token,
                 expected: "an 'if' to start a conditional",
@@ -677,7 +681,7 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.bad_eof("looking for open brace to start block"))?;
         if !matches!(next.token, Token::OpenBrace) {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: next.span,
                 token: next.token,
                 expected: "an open brace to start a block",
@@ -701,7 +705,7 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.bad_eof("looking for statement or block close"))?;
         if !matches!(next.token, Token::CloseBrace) {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: next.span,
                 token: next.token,
                 expected: "a close brace to end a block",
@@ -762,7 +766,7 @@ impl<'a> Parser<'a> {
         if !matches!(next.token, Token::ValueName(ref n) if n == "let") {
             self.save(next.clone());
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: next.span,
                 token: next.token,
                 expected: "a 'let' to open a binding statement",
@@ -785,7 +789,7 @@ impl<'a> Parser<'a> {
             Token::ValueName(v) => Name::new(self.to_location(next.span), v),
             _ => {
                 return Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span: next.span,
                     token: next.token,
                     expected: "a variable name for the let binding",
@@ -798,7 +802,7 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.bad_eof("an '=' after a variable name in a binding"))?;
         if !matches!(next.token, Token::OperatorName(ref x) if x == "=") {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: next.span,
                 token: next.token,
                 expected: "an '=' after the variable name in a let binding",
@@ -812,7 +816,7 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.bad_eof("looking for terminal semicolon for let statement"))?;
         if !matches!(next.token, Token::Semi) {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: next.span,
                 token: next.token,
                 expected: "a semicolon to finish a let statement",
@@ -839,7 +843,7 @@ impl<'a> Parser<'a> {
                 if *pre_prec < level {
                     self.save(next.clone());
                     return Err(ParserError::UnexpectedToken {
-                        file_id: self.file_id,
+                        file: self.file.clone(),
                         span: next.span,
                         token: next.token,
                         expected: "a base expression of a tighter-binding prefix operator",
@@ -918,7 +922,7 @@ impl<'a> Parser<'a> {
 
         if !matches!(next.token, Token::OpenParen) {
             return Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span: next.span,
                 token: next.token,
                 expected: "open paren for call arguments",
@@ -948,7 +952,7 @@ impl<'a> Parser<'a> {
                 Token::CloseParen => break,
                 _ => {
                     return Err(ParserError::UnexpectedToken {
-                        file_id: self.file_id,
+                        file: self.file.clone(),
                         span: next.span,
                         token: next.token,
                         expected: "comma or close paren in function arguments",
@@ -985,7 +989,7 @@ impl<'a> Parser<'a> {
                 } else {
                     self.save(hopefully_close.clone());
                     Err(ParserError::UnexpectedToken {
-                        file_id: self.file_id,
+                        file: self.file.clone(),
                         span: hopefully_close.span,
                         token: hopefully_close.token,
                         expected: "close paren after expression",
@@ -1012,7 +1016,7 @@ impl<'a> Parser<'a> {
                         })?;
                         if !matches!(closer.token, Token::CloseBrace) {
                             return Err(ParserError::UnexpectedToken {
-                                file_id: self.file_id,
+                                file: self.file.clone(),
                                 span: closer.span,
                                 token: closer.token,
                                 expected: "close brace or comma after field value",
@@ -1028,7 +1032,7 @@ impl<'a> Parser<'a> {
                         })?;
                         if !matches!(second_colon.token, Token::Colon) {
                             return Err(ParserError::UnexpectedToken {
-                                file_id: self.file_id,
+                                file: self.file.clone(),
                                 span: second_colon.span,
                                 token: second_colon.token,
                                 expected: "second colon in enumeration value",
@@ -1047,7 +1051,7 @@ impl<'a> Parser<'a> {
 
                             _ => {
                                 return Err(ParserError::UnexpectedToken {
-                                    file_id: self.file_id,
+                                    file: self.file.clone(),
                                     span: vname.span,
                                     token: vname.token,
                                     expected: "enumeration value name",
@@ -1063,7 +1067,7 @@ impl<'a> Parser<'a> {
                             })?;
                             if !matches!(tok.token, Token::CloseParen) {
                                 return Err(ParserError::UnexpectedToken {
-                                    file_id: self.file_id,
+                                    file: self.file.clone(),
                                     span: tok.span,
                                     token: tok.token,
                                     expected: "close paren after enum value argument",
@@ -1079,7 +1083,7 @@ impl<'a> Parser<'a> {
                     }
 
                     _ => Err(ParserError::UnexpectedToken {
-                        file_id: self.file_id,
+                        file: self.file.clone(),
                         span: after_type_name.span,
                         token: after_type_name.token,
                         expected: "colon, open brace, or open paren in constructor",
@@ -1096,7 +1100,7 @@ impl<'a> Parser<'a> {
             _ => {
                 self.save(next.clone());
                 Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span: next.span,
                     token: next.token,
                     expected: "some base expression or an open brace",
@@ -1120,7 +1124,7 @@ impl<'a> Parser<'a> {
             match args.pop() {
                 None => {
                     return Err(ParserError::UnacceptableEof {
-                        file_id: self.file_id,
+                        file: self.file.clone(),
                         place: "parsing function type or type",
                     });
                 }
@@ -1129,7 +1133,7 @@ impl<'a> Parser<'a> {
 
                 Some(_) => {
                     return Err(ParserError::UnacceptableEof {
-                        file_id: self.file_id,
+                        file: self.file.clone(),
                         place: "looking for '->' in function type",
                     });
                 }
@@ -1147,7 +1151,7 @@ impl<'a> Parser<'a> {
             let LocatedToken { token, span } = maybe_arrow;
 
             Err(ParserError::UnexpectedToken {
-                file_id: self.file_id,
+                file: self.file.clone(),
                 span,
                 token,
                 expected: "'->' in function type",
@@ -1193,7 +1197,7 @@ impl<'a> Parser<'a> {
 
                 if !matches!(closer.token, Token::CloseParen) {
                     return Err(ParserError::UnexpectedToken {
-                        file_id: self.file_id,
+                        file: self.file.clone(),
                         span: closer.span,
                         token: closer.token,
                         expected: "close parenthesis to finish a type",
@@ -1209,7 +1213,7 @@ impl<'a> Parser<'a> {
                 });
 
                 Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span,
                     token,
                     expected: "type constructor, type variable, or primitive type",
@@ -1239,7 +1243,7 @@ impl<'a> Parser<'a> {
             _ => {
                 self.save(maybe_constant.clone());
                 Err(ParserError::UnexpectedToken {
-                    file_id: self.file_id,
+                    file: self.file.clone(),
                     span: maybe_constant.span,
                     token: maybe_constant.token,
                     expected: "constant value",

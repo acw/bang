@@ -7,7 +7,7 @@ use crate::syntax::*;
 fn constants() {
     let parse_constant = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_constant()
     };
 
@@ -65,7 +65,7 @@ fn constants() {
 fn types() {
     let parse_type = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_type()
     };
 
@@ -123,7 +123,7 @@ fn types() {
 fn type_restrictions() {
     let parse_tr = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_type_restrictions()
     };
 
@@ -195,7 +195,7 @@ fn type_restrictions() {
 fn field_definition() {
     let parse_fd = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_field_definition()
     };
 
@@ -249,7 +249,7 @@ fn field_definition() {
 fn structures() {
     let parse_st = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_structure()
     };
 
@@ -325,7 +325,7 @@ fn structures() {
 fn enum_variant() {
     let parse_ev = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_enum_variant()
     };
 
@@ -382,7 +382,7 @@ fn enum_variant() {
 fn enumerations() {
     let parse_en = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_enumeration()
     };
 
@@ -418,7 +418,7 @@ fn enumerations() {
 fn expressions() {
     let parse_ex = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_expression()
     };
 
@@ -451,7 +451,7 @@ fn expressions() {
 fn enumeration_values() {
     let parse_ex = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_expression()
     };
 
@@ -472,7 +472,7 @@ fn enumeration_values() {
 fn structure_value() {
     let parse_st = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_expression()
     };
 
@@ -521,7 +521,7 @@ fn structure_value() {
 fn infix_and_precedence() {
     let parse_ex = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.add_infix_precedence("+", parse::Associativity::Left, 6);
         result.add_infix_precedence("*", parse::Associativity::Right, 7);
         result.parse_expression()
@@ -625,7 +625,7 @@ fn infix_and_precedence() {
 fn calls() {
     let parse_ex = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.add_infix_precedence("+", parse::Associativity::Left, 6);
         result.add_infix_precedence("*", parse::Associativity::Right, 7);
         result.parse_expression()
@@ -766,7 +766,7 @@ fn calls() {
 fn prefix_and_postfix() {
     let parse_ex = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.add_infix_precedence("+", parse::Associativity::Left, 4);
         result.add_infix_precedence("*", parse::Associativity::Left, 8);
         result.add_prefix_precedence("++", 6);
@@ -840,7 +840,7 @@ fn prefix_and_postfix() {
 fn blocks() {
     let parse_ex = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_expression()
     };
 
@@ -879,7 +879,7 @@ fn blocks() {
 fn bindings() {
     let parse_ex = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_expression()
     };
 
@@ -896,7 +896,7 @@ fn bindings() {
 fn conditionals() {
     let parse_ex = |str| {
         let lexer = Lexer::from(str);
-        let mut result = Parser::new(0, lexer);
+        let mut result = Parser::new("test", lexer);
         result.parse_expression()
     };
 
