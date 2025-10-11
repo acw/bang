@@ -72,50 +72,47 @@ fn types() {
     assert!(matches!(
         parse_type("Cons"),
         Ok(Type::Application(cons, empty)) if
-            matches!(cons.as_ref(), Type::Constructor(_, c) if c == "Cons") &&
+            matches!(cons.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Cons") &&
             empty.is_empty()
     ));
     assert!(matches!(
         parse_type("cons"),
-        Ok(Type::Variable(_, c)) if c == "cons"
+        Ok(Type::Variable(_, c)) if c.as_printed() == "cons"
     ));
     assert!(matches!(
         parse_type("Cons a b"),
         Ok(Type::Application(a, b))
-            if matches!(a.as_ref(), Type::Constructor(_, c) if c == "Cons") &&
+            if matches!(a.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Cons") &&
                matches!(b.as_slice(), [Type::Variable(_, b1), Type::Variable(_, b2)]
-                   if b1 == "a" && b2 == "b")
+                   if b1.as_printed() == "a" && b2.as_printed() == "b")
     ));
     assert!(matches!(
         parse_type("a -> z"),
         Ok(Type::Function(a, z))
-            if matches!(a.as_slice(), [Type::Variable(_, a1)] if a1 == "a") &&
-               matches!(z.as_ref(), Type::Variable(_, z1) if z1 == "z")
+            if matches!(a.as_slice(), [Type::Variable(_, a1)] if a1.as_printed() == "a") &&
+               matches!(z.as_ref(), Type::Variable(_, z1) if z1.as_printed() == "z")
     ));
-    println!("-------------");
-    println!("{:?}", parse_type("(a -> z)"));
-    println!("-------------");
     assert!(matches!(
         parse_type("(a -> z)"),
         Ok(Type::Function(a, z))
-            if matches!(a.as_slice(), [Type::Variable(_, a1)] if a1 == "a") &&
-               matches!(z.as_ref(), Type::Variable(_, z1) if z1 == "z")
+            if matches!(a.as_slice(), [Type::Variable(_, a1)] if a1.as_printed() == "a") &&
+               matches!(z.as_ref(), Type::Variable(_, z1) if z1.as_printed() == "z")
     ));
     assert!(matches!(
         parse_type("a b -> z"),
         Ok(Type::Function(a, z))
             if matches!(a.as_slice(), [Type::Variable(_, a1), Type::Variable(_, b1)]
-                    if a1 == "a" && b1 == "b") &&
-               matches!(z.as_ref(), Type::Variable(_, z1) if z1 == "z")
+                    if a1.as_printed() == "a" && b1.as_printed() == "b") &&
+               matches!(z.as_ref(), Type::Variable(_, z1) if z1.as_printed() == "z")
     ));
     assert!(matches!(
         parse_type("Cons a b -> z"),
         Ok(Type::Function(a, z))
             if matches!(a.as_slice(), [Type::Application(cons, appargs)]
-                if matches!(cons.as_ref(), Type::Constructor(_, c) if c == "Cons") &&
+                if matches!(cons.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Cons") &&
                    matches!(appargs.as_slice(), [Type::Variable(_, b1), Type::Variable(_, b2)]
-                       if b1 == "a" && b2 == "b")) &&
-               matches!(z.as_ref(), Type::Variable(_, z1) if z1 == "z")
+                       if b1.as_printed() == "a" && b2.as_printed() == "b")) &&
+               matches!(z.as_ref(), Type::Variable(_, z1) if z1.as_printed() == "z")
     ));
 }
 
@@ -138,10 +135,10 @@ fn type_restrictions() {
           matches!(&restrictions[0], TypeRestriction {
               constructor,
               arguments,
-        } if matches!(constructor, Type::Constructor(_, x) if x == "Cons") &&
+        } if matches!(constructor, Type::Constructor(_, x) if x.as_printed() == "Cons") &&
              arguments.len() == 2 &&
-             matches!(&arguments[0], Type::Variable(_, x) if x == "a") &&
-             matches!(&arguments[1], Type::Variable(_, x) if x == "b"))));
+             matches!(&arguments[0], Type::Variable(_, x) if x.as_printed() == "a") &&
+             matches!(&arguments[1], Type::Variable(_, x) if x.as_printed() == "b"))));
 
     assert!(matches!(
         parse_tr("restrict(Cons a b,)"),
@@ -149,10 +146,10 @@ fn type_restrictions() {
           matches!(&restrictions[0], TypeRestriction {
               constructor,
               arguments,
-        } if matches!(constructor, Type::Constructor(_, x) if x == "Cons") &&
+        } if matches!(constructor, Type::Constructor(_, x) if x.as_printed() == "Cons") &&
              arguments.len() == 2 &&
-             matches!(&arguments[0], Type::Variable(_, x) if x == "a") &&
-             matches!(&arguments[1], Type::Variable(_, x) if x == "b"))));
+             matches!(&arguments[0], Type::Variable(_, x) if x.as_printed() == "a") &&
+             matches!(&arguments[1], Type::Variable(_, x) if x.as_printed() == "b"))));
 
     assert!(matches!(parse_tr("restrict(,Cons a b,)"), Err(_)));
 
@@ -162,16 +159,16 @@ fn type_restrictions() {
           matches!(&restrictions[0], TypeRestriction {
               constructor,
               arguments,
-        } if matches!(constructor, Type::Constructor(_, x) if x == "Cons") &&
+        } if matches!(constructor, Type::Constructor(_, x) if x.as_printed() == "Cons") &&
              arguments.len() == 2 &&
-             matches!(&arguments[0], Type::Variable(_, x) if x == "a") &&
-             matches!(&arguments[1], Type::Variable(_, x) if x == "b")) &&
+             matches!(&arguments[0], Type::Variable(_, x) if x.as_printed() == "a") &&
+             matches!(&arguments[1], Type::Variable(_, x) if x.as_printed() == "b")) &&
           matches!(&restrictions[1], TypeRestriction {
               constructor,
               arguments,
-          } if matches!(constructor, Type::Constructor(_, x) if x == "Monad") &&
+          } if matches!(constructor, Type::Constructor(_, x) if x.as_printed() == "Monad") &&
              arguments.len() == 1 &&
-             matches!(&arguments[0], Type::Variable(_, x) if x == "m"))));
+             matches!(&arguments[0], Type::Variable(_, x) if x.as_printed() == "m"))));
 
     assert!(matches!(
         parse_tr("restrict(Cons a b, Monad m,)"),
@@ -179,16 +176,16 @@ fn type_restrictions() {
           matches!(&restrictions[0], TypeRestriction {
               constructor,
               arguments,
-        } if matches!(constructor, Type::Constructor(_, x) if x == "Cons") &&
+        } if matches!(constructor, Type::Constructor(_, x) if x.as_printed() == "Cons") &&
              arguments.len() == 2 &&
-             matches!(&arguments[0], Type::Variable(_, x) if x == "a") &&
-             matches!(&arguments[1], Type::Variable(_, x) if x == "b")) &&
+             matches!(&arguments[0], Type::Variable(_, x) if x.as_printed() == "a") &&
+             matches!(&arguments[1], Type::Variable(_, x) if x.as_printed() == "b")) &&
           matches!(&restrictions[1], TypeRestriction {
               constructor,
               arguments,
-          } if matches!(constructor, Type::Constructor(_, x) if x == "Monad") &&
+          } if matches!(constructor, Type::Constructor(_, x) if x.as_printed() == "Monad") &&
              arguments.len() == 1 &&
-             matches!(&arguments[0], Type::Variable(_, x) if x == "m"))));
+             matches!(&arguments[0], Type::Variable(_, x) if x.as_printed() == "m"))));
 }
 
 #[test]
@@ -203,46 +200,46 @@ fn field_definition() {
     assert!(matches!(
         parse_fd("foo,"),
         Ok(Some(StructureField{ name, export: ExportClass::Private, field_type: None, .. }))
-          if name == "foo"
+          if name.as_printed() == "foo"
     ));
     assert!(matches!(
         parse_fd("foo}"),
         Ok(Some(StructureField{ name, export: ExportClass::Private, field_type: None, .. }))
-          if name == "foo"
+          if name.as_printed() == "foo"
     ));
 
     assert!(matches!(
         parse_fd("foo: Word8,"),
         Ok(Some(StructureField{ name, field_type, .. }))
-          if name == "foo" &&
+          if name.as_printed() == "foo" &&
              matches!(&field_type, Some(Type::Application(c, args))
-                 if matches!(c.as_ref(), Type::Constructor(_, c) if c == "Word8") &&
+                 if matches!(c.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Word8") &&
                     args.is_empty())));
 
     assert!(matches!(
         parse_fd("foo: Cons a b,"),
         Ok(Some(StructureField{ name, field_type, .. }))
-          if name == "foo" &&
+          if name.as_printed() == "foo" &&
              matches!(&field_type, Some(Type::Application(c, args))
-                 if matches!(c.as_ref(), Type::Constructor(_, c) if c == "Cons") &&
+                 if matches!(c.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Cons") &&
                     matches!(&args.as_slice(), &[Type::Variable(_, v1), Type::Variable(_, v2)]
-                        if v1 == "a" && v2 == "b"))));
+                        if v1.as_printed() == "a" && v2.as_printed() == "b"))));
 
     assert!(matches!(
         parse_fd("foo: a -> b,"),
         Ok(Some(StructureField{ name, field_type, .. }))
-          if name == "foo" &&
+          if name.as_printed() == "foo" &&
              matches!(&field_type, Some(Type::Function(args, ret))
-                 if matches!(&args.as_slice(), &[Type::Variable(_, a)] if a == "a") &&
-                    matches!(ret.as_ref(), Type::Variable(_, b) if b == "b"))));
+                 if matches!(&args.as_slice(), &[Type::Variable(_, a)] if a.as_printed() == "a") &&
+                    matches!(ret.as_ref(), Type::Variable(_, b) if b.as_printed() == "b"))));
 
     assert!(matches!(
         parse_fd("export foo: a -> b,"),
         Ok(Some(StructureField{ name, export: ExportClass::Public, field_type, .. }))
-          if name == "foo" &&
+          if name.as_printed() == "foo" &&
              matches!(&field_type, Some(Type::Function(args, ret))
-                 if matches!(&args.as_slice(), &[Type::Variable(_, a)] if a == "a") &&
-                    matches!(ret.as_ref(), Type::Variable(_, b) if b == "b"))));
+                 if matches!(&args.as_slice(), &[Type::Variable(_, a)] if a.as_printed() == "a") &&
+                    matches!(ret.as_ref(), Type::Variable(_, b) if b.as_printed() == "b"))));
 }
 
 #[test]
@@ -260,65 +257,65 @@ fn structures() {
     assert!(matches!(
         parse_st("structure Foo {}"),
         Ok(StructureDef { name, fields, .. })
-          if name == "Foo" && fields.is_empty()));
+          if name.as_printed() == "Foo" && fields.is_empty()));
 
     assert!(matches!(
         parse_st("structure Foo { bar }"),
         Ok(StructureDef { name, fields, .. })
-          if name == "Foo" &&
+          if name.as_printed() == "Foo" &&
              matches!(fields.as_slice(), &[StructureField { ref name, ref field_type, .. }]
-                 if name == "bar" && matches!(field_type, None))));
+                 if name.as_printed() == "bar" && matches!(field_type, None))));
 
     assert!(matches!(
         parse_st("structure Foo { bar: Word8 }"),
         Ok(StructureDef { name, fields, .. })
-          if name == "Foo" &&
+          if name.as_printed() == "Foo" &&
              matches!(fields.as_slice(), &[StructureField { ref name, ref field_type, .. }]
-                 if name == "bar" &&
+                 if name.as_printed() == "bar" &&
                     matches!(field_type, Some(Type::Application(c, args))
-                      if matches!(c.as_ref(), Type::Constructor(_, c) if c == "Word8") &&
+                      if matches!(c.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Word8") &&
                          args.is_empty()))));
 
     assert!(matches!(
         parse_st("structure Foo { bar: Word8, goo }"),
         Ok(StructureDef { name, fields, .. })
-          if name == "Foo" &&
+          if name.as_printed() == "Foo" &&
              matches!(fields.as_slice(),
                &[StructureField { ref name, ref field_type, .. },
                  StructureField { name: ref name2, field_type: None, .. }]
-                 if name == "bar" &&
-                    name2 == "goo" &&
+                 if name.as_printed() == "bar" &&
+                    name2.as_printed() == "goo" &&
                     matches!(field_type, Some(Type::Application(c, args))
-                      if matches!(c.as_ref(), Type::Constructor(_, c) if c == "Word8") &&
+                      if matches!(c.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Word8") &&
                          args.is_empty()))));
 
     assert!(matches!(
         parse_st("structure Foo { bar: b c -> a, goo }"),
         Ok(StructureDef { name, fields, .. })
-          if name == "Foo" &&
+          if name.as_printed() == "Foo" &&
              matches!(fields.as_slice(),
                &[StructureField { ref name, ref field_type, .. },
                  StructureField { name: ref name2, field_type: None, .. }]
-                 if name == "bar" &&
-                    name2 == "goo" &&
+                 if name.as_printed() == "bar" &&
+                    name2.as_printed() == "goo" &&
                     matches!(field_type, Some(Type::Function(args, ret))
                       if matches!(&args.as_slice(), &[Type::Variable(_, b), Type::Variable(_, c)]
-                           if b == "b" && c == "c") &&
-                         matches!(ret.as_ref(), Type::Variable(_, a) if a == "a")))));
+                           if b.as_printed() == "b" && c.as_printed() == "c") &&
+                         matches!(ret.as_ref(), Type::Variable(_, a) if a.as_printed() == "a")))));
 
     assert!(matches!(
         parse_st("structure Foo { bar: b c -> a, goo, }"),
         Ok(StructureDef { name, fields, .. })
-          if name == "Foo" &&
+          if name.as_printed() == "Foo" &&
              matches!(fields.as_slice(),
                &[StructureField { ref name, ref field_type, .. },
                  StructureField { name: ref name2, field_type: None, .. }]
-                 if name == "bar" &&
-                    name2 == "goo" &&
+                 if name.as_printed() == "bar" &&
+                    name2.as_printed() == "goo" &&
                     matches!(field_type, Some(Type::Function(args, ret))
                       if matches!(&args.as_slice(), &[Type::Variable(_, b), Type::Variable(_, c)]
-                           if b == "b" && c == "c") &&
-                         matches!(ret.as_ref(), Type::Variable(_, a) if a == "a")))));
+                           if b.as_printed() == "b" && c.as_printed() == "c") &&
+                         matches!(ret.as_ref(), Type::Variable(_, a) if a.as_printed() == "a")))));
 }
 
 #[test]
@@ -339,43 +336,43 @@ fn enum_variant() {
     assert!(matches!(
       parse_ev("Cons,"),
       Ok(Some(EnumerationVariant { name, argument, .. }))
-            if name == "Cons" && argument.is_none()));
+            if name.as_printed() == "Cons" && argument.is_none()));
     assert!(matches!(
       parse_ev("Cons }"),
       Ok(Some(EnumerationVariant { name, argument, .. }))
-            if name == "Cons" && argument.is_none()));
+            if name.as_printed() == "Cons" && argument.is_none()));
     assert!(matches!(
       parse_ev("Cons, }"),
       Ok(Some(EnumerationVariant { name, argument, .. }))
-            if name == "Cons" && argument.is_none()));
+            if name.as_printed() == "Cons" && argument.is_none()));
 
     assert!(matches!(
       parse_ev("Cons(Pair a),"),
       Ok(Some(EnumerationVariant { name, ref argument, .. }))
-            if name == "Cons" &&
+            if name.as_printed() == "Cons" &&
                matches!(argument, Some(Type::Application(typef, args))
                  if matches!(typef.as_ref(), Type::Constructor(_, name)
-                       if name == "Pair") &&
+                       if name.as_printed() == "Pair") &&
                     matches!(&args.as_slice(), &[Type::Variable(_, argname)]
-                       if argname == "a"))));
+                       if argname.as_printed() == "a"))));
     assert!(matches!(
       parse_ev("Cons(Pair a) }"),
       Ok(Some(EnumerationVariant { name, ref argument, .. }))
-            if name == "Cons" &&
+            if name.as_printed() == "Cons" &&
                matches!(argument, Some(Type::Application(typef, args))
                  if matches!(typef.as_ref(), Type::Constructor(_, name)
-                       if name == "Pair") &&
+                       if name.as_printed() == "Pair") &&
                     matches!(&args.as_slice(), &[Type::Variable(_, argname)]
-                       if argname == "a"))));
+                       if argname.as_printed() == "a"))));
 
     assert!(matches!(
       parse_ev("Cons(a b -> c) }"),
       Ok(Some(EnumerationVariant { name, ref argument, .. }))
-            if name == "Cons" &&
+            if name.as_printed() == "Cons" &&
                matches!(argument, Some(Type::Function(args, ret))
                  if matches!(&args.as_slice(), &[Type::Variable(_, a), Type::Variable(_, b)]
-                      if a == "a" && b == "b") &&
-                    matches!(ret.as_ref(), Type::Variable(_, c) if c == "c"))));
+                      if a.as_printed() == "a" && b.as_printed() == "b") &&
+                    matches!(ret.as_ref(), Type::Variable(_, c) if c.as_printed() == "c"))));
 }
 
 #[test]
@@ -393,25 +390,25 @@ fn enumerations() {
     assert!(matches!(
       parse_en("enumeration Empty { }"),
       Ok(EnumerationDef { name, variants, .. })
-        if name == "Empty" && variants.is_empty()));
+        if name.as_printed() == "Empty" && variants.is_empty()));
     assert!(matches!(
       parse_en("enumeration Alternates { A, B }"),
       Ok(EnumerationDef { name, variants, .. })
-        if name == "Alternates" &&
+        if name.as_printed() == "Alternates" &&
            matches!(&variants.as_slice(), &[
                EnumerationVariant { name: name1, argument: arg1, ..},
                EnumerationVariant { name: name2, argument: arg2, ..},
-           ] if name1 == "A" && arg1.is_none() &&
-                name2 == "B" && arg2.is_none())));
+           ] if name1.as_printed() == "A" && arg1.is_none() &&
+                name2.as_printed() == "B" && arg2.is_none())));
     assert!(matches!(
       parse_en("enumeration Alternates { A, B, }"),
       Ok(EnumerationDef { name, variants, .. })
-        if name == "Alternates" &&
+        if name.as_printed() == "Alternates" &&
            matches!(&variants.as_slice(), &[
                EnumerationVariant { name: name1, argument: arg1, ..},
                EnumerationVariant { name: name2, argument: arg2, ..},
-           ] if name1 == "A" && arg1.is_none() &&
-                name2 == "B" && arg2.is_none())));
+           ] if name1.as_printed() == "A" && arg1.is_none() &&
+                name2.as_printed() == "B" && arg2.is_none())));
 }
 
 #[test]

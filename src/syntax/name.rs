@@ -57,4 +57,8 @@ impl Name {
     pub fn as_printed(&self) -> &str {
         self.printable.as_str()
     }
+
+    pub fn bind_to(&mut self, other: &Name) {
+        self.identifier = other.identifier;
+    }
 }

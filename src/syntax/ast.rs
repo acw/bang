@@ -1,0 +1,228 @@
+use crate::syntax::location::{Located, Location};
+use crate::syntax::name::Name;
+use proptest_derive::Arbitrary;
+
+#[derive(Debug)]
+pub struct Module {
+    pub definitions: Vec<Definition>,
+}
+
+#[derive(Debug)]
+pub struct Definition {
+    pub location: Location,
+    pub export: ExportClass,
+    pub type_restrictions: TypeRestrictions,
+    pub definition: Def,
+}
+
+impl Located for Definition {
+    fn location(&self) -> Location {
+        self.location.clone()
+    }
+}
+
+#[derive(Debug)]
+pub enum Def {
+    Enumeration(EnumerationDef),
+    Structure(StructureDef),
+    Function(FunctionDef),
+    Value(ValueDef),
+}
+
+impl Located for Def {
+    fn location(&self) -> Location {
+        match self {
+            Def::Enumeration(def) => def.location.clone(),
+            Def::Structure(def) => def.location.clone(),
+            Def::Function(def) => def.location.clone(),
+            Def::Value(def) => def.location.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct EnumerationDef {
+    pub name: Name,
+    pub location: Location,
+    pub variants: Vec<EnumerationVariant>,
+}
+
+#[derive(Debug)]
+pub struct EnumerationVariant {
+    pub location: Location,
+    pub name: Name,
+    pub argument: Option<Type>,
+}
+
+#[derive(Debug)]
+pub struct StructureDef {
+    pub name: Name,
+    pub location: Location,
+    pub fields: Vec<StructureField>,
+}
+
+#[derive(Debug)]
+pub struct StructureField {
+    pub location: Location,
+    pub export: ExportClass,
+    pub name: Name,
+    pub field_type: Option<Type>,
+}
+
+#[derive(Debug)]
+pub struct FunctionDef {
+    pub name: Name,
+    pub location: Location,
+    pub arguments: Vec<FunctionArg>,
+    pub return_type: Option<Type>,
+    pub body: Vec<Statement>,
+}
+
+#[derive(Debug)]
+pub struct FunctionArg {
+    pub name: Name,
+    pub arg_type: Option<Type>,
+}
+
+#[derive(Debug)]
+pub struct ValueDef {
+    pub name: Name,
+    pub location: Location,
+    pub value: Expression,
+}
+
+#[derive(Debug)]
+pub enum ExportClass {
+    Public,
+    Private,
+}
+
+#[derive(Debug)]
+pub enum Statement {
+    Binding(BindingStmt),
+    Expression(Expression),
+}
+
+#[derive(Debug)]
+pub struct BindingStmt {
+    pub location: Location,
+    pub mutable: bool,
+    pub variable: Name,
+    pub value: Expression,
+}
+
+#[derive(Debug)]
+pub enum Expression {
+    Value(ConstantValue),
+    Reference(Name),
+    EnumerationValue(Name, Name, Option<Box<Expression>>),
+    StructureValue(Name, Vec<FieldValue>),
+    Conditional(ConditionalExpr),
+    Match(MatchExpr),
+    Call(Box<Expression>, CallKind, Vec<Expression>),
+    Block(Location, Vec<Statement>),
+}
+
+#[derive(Debug)]
+pub struct ConditionalExpr {
+    pub location: Location,
+    pub test: Box<Expression>,
+    pub consequent: Box<Expression>,
+    pub alternative: Option<Box<Expression>>,
+}
+
+#[derive(Debug)]
+pub struct MatchExpr {
+    pub location: Location,
+    pub value: Box<Expression>,
+    pub cases: Vec<MatchCase>,
+}
+
+#[derive(Debug)]
+pub struct MatchCase {}
+
+#[derive(Debug)]
+pub enum CallKind {
+    Infix,
+    Normal,
+    Postfix,
+    Prefix,
+}
+
+#[derive(Debug)]
+pub struct FieldValue {
+    pub field: Name,
+    pub value: Expression,
+}
+
+#[derive(Debug)]
+pub struct TypeRestrictions {
+    pub restrictions: Vec<TypeRestriction>,
+}
+
+impl TypeRestrictions {
+    pub fn empty() -> Self {
+        TypeRestrictions {
+            restrictions: vec![],
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct TypeRestriction {
+    pub constructor: Type,
+    pub arguments: Vec<Type>,
+}
+
+#[derive(Debug)]
+pub enum Type {
+    Constructor(Location, Name),
+    Variable(Location, Name),
+    Primitive(Location, Name),
+    Application(Box<Type>, Vec<Type>),
+    Function(Vec<Type>, Box<Type>),
+}
+
+impl Located for Type {
+    fn location(&self) -> Location {
+        match self {
+            Type::Constructor(l, _) => l.clone(),
+            Type::Variable(l, _) => l.clone(),
+            Type::Primitive(l, _) => l.clone(),
+            Type::Application(t1, ts) => {
+                let mut result = t1.location();
+                if let Some(last) = ts.last() {
+                    result = result.extend_to(&last.location());
+                }
+                result
+            }
+            Type::Function(args, ret) => {
+                if let Some(first) = args.first() {
+                    first.location().extend_to(&ret.location())
+                } else {
+                    ret.location()
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ConstantValue {
+    Integer(Location, IntegerWithBase),
+    Character(Location, char),
+    String(Location, String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Arbitrary)]
+pub struct IntegerWithBase {
+    #[proptest(strategy = "proptest::prop_oneof![ \
+        proptest::strategy::Just(None), \
+        proptest::strategy::Just(Some(2)), \
+        proptest::strategy::Just(Some(8)), \
+        proptest::strategy::Just(Some(10)), \
+        proptest::strategy::Just(Some(16)), \
+    ]")]
+    pub base: Option<u8>,
+    pub value: u64,
+}

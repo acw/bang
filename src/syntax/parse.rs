@@ -3,6 +3,8 @@ use crate::syntax::tokens::{Lexer, LocatedToken, Token};
 use crate::syntax::*;
 use internment::ArcIntern;
 use std::collections::HashMap;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 pub struct Parser<'lexer> {
     file: ArcIntern<PathBuf>,
@@ -26,10 +28,7 @@ impl<'lexer> Parser<'lexer> {
     /// error messages. If you don't care about either, you can use
     /// 0 with no loss of functionality. (Obviously, it will be harder
     /// to create quality error messages, but you already knew that.)
-    pub fn new<P: AsRef<Path>>(
-        file: P,
-        lexer: Lexer<'lexer>
-    ) -> Parser<'lexer> {
+    pub fn new<P: AsRef<Path>>(file: P, lexer: Lexer<'lexer>) -> Parser<'lexer> {
         Parser {
             file: ArcIntern::new(file.as_ref().to_path_buf()),
             lexer,
@@ -200,10 +199,12 @@ impl<'lexer> Parser<'lexer> {
 
         let constructor = match maybe_constructor.token {
             Token::TypeName(str) => {
-                Type::Constructor(self.to_location(maybe_constructor.span), str)
+                let name = Name::new(self.to_location(maybe_constructor.span.clone()), str);
+                Type::Constructor(self.to_location(maybe_constructor.span), name)
             }
             Token::PrimitiveTypeName(str) => {
-                Type::Primitive(self.to_location(maybe_constructor.span), str)
+                let name = Name::new(self.to_location(maybe_constructor.span.clone()), str);
+                Type::Primitive(self.to_location(maybe_constructor.span), name)
             }
 
             token @ Token::CloseParen | token @ Token::Comma => {
@@ -289,7 +290,7 @@ impl<'lexer> Parser<'lexer> {
             .next()?
             .ok_or_else(|| self.bad_eof("looking for structure name"))?;
         let structure_name = match name.token {
-            Token::TypeName(str) => str,
+            Token::TypeName(str) => Name::new(self.to_location(name.span), str),
             _ => {
                 return Err(ParserError::UnexpectedToken {
                     file: self.file.clone(),
@@ -385,7 +386,7 @@ impl<'lexer> Parser<'lexer> {
             .ok_or_else(|| self.bad_eof("parsing field definition"))?;
 
         let name = match maybe_name.token {
-            Token::ValueName(x) => x,
+            Token::ValueName(x) => Name::new(self.to_location(maybe_name.span.clone()), x),
             _ => {
                 self.save(maybe_name.clone());
                 if matches!(export, ExportClass::Private) {
@@ -474,7 +475,7 @@ impl<'lexer> Parser<'lexer> {
             .next()?
             .ok_or_else(|| self.bad_eof("looking for enumeration name"))?;
         let enumeration_name = match name.token {
-            Token::TypeName(str) => str,
+            Token::TypeName(str) => Name::new(self.to_location(name.span), str),
             _ => {
                 return Err(ParserError::UnexpectedToken {
                     file: self.file.clone(),
@@ -531,7 +532,7 @@ impl<'lexer> Parser<'lexer> {
             .next()?
             .ok_or_else(|| self.bad_eof("looking for enumeration name"))?;
         let name = match maybe_name.token {
-            Token::TypeName(x) => x,
+            Token::TypeName(x) => Name::new(self.to_location(maybe_name.span.clone()), x),
             Token::CloseBrace => {
                 self.save(maybe_name);
                 return Ok(None);
@@ -613,7 +614,9 @@ impl<'lexer> Parser<'lexer> {
 
         self.save(next.clone());
         match next.token {
-            Token::ValueName(x) if x == "match" => self.parse_match_expression(),
+            Token::ValueName(x) if x == "match" => {
+                Ok(Expression::Match(self.parse_match_expression()?))
+            }
             Token::ValueName(x) if x == "if" => {
                 Ok(Expression::Conditional(self.parse_if_expression()?))
             }
@@ -621,7 +624,64 @@ impl<'lexer> Parser<'lexer> {
         }
     }
 
-    fn parse_match_expression(&mut self) -> Result<Expression, ParserError> {
+    fn parse_match_expression(&mut self) -> Result<MatchExpr, ParserError> {
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for a 'match' to open a pattern match"))?;
+
+        if !matches!(next.token, Token::ValueName(ref x) if x == "match") {
+            return Err(ParserError::UnexpectedToken {
+                file: self.file.clone(),
+                span: next.span,
+                token: next.token,
+                expected: "an 'match' to start a pattern match",
+            });
+        }
+        let start = self.to_location(next.span);
+
+        let value = Box::new(self.parse_arithmetic(0)?);
+
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for an open brace after 'match'"))?;
+        if !matches!(next.token, Token::OpenBrace) {
+            return Err(ParserError::UnexpectedToken {
+                file: self.file.clone(),
+                span: next.span,
+                token: next.token,
+                expected: "an open brace after the match expression",
+            });
+        }
+
+        let mut cases = vec![];
+
+        while let Some(case) = self.parse_match_case()? {
+            cases.push(case);
+        }
+
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for an open brace after 'match'"))?;
+        if !matches!(next.token, Token::CloseBrace) {
+            return Err(ParserError::UnexpectedToken {
+                file: self.file.clone(),
+                span: next.span,
+                token: next.token,
+                expected: "a close brace to end a match expression",
+            });
+        }
+        let end = self.to_location(next.span);
+
+        let location = start.extend_to(&end);
+
+        Ok(MatchExpr {
+            location,
+            value,
+            cases,
+        })
+    }
+
+    fn parse_match_case(&mut self) -> Result<Option<MatchCase>, ParserError> {
         unimplemented!()
     }
 
@@ -668,7 +728,7 @@ impl<'lexer> Parser<'lexer> {
         };
 
         Ok(ConditionalExpr {
-            location,
+            location: start.extend_to(&location),
             test: Box::new(test),
             consequent: Box::new(consequent),
             alternative,
@@ -1164,8 +1224,14 @@ impl<'lexer> Parser<'lexer> {
             self.next()?.ok_or_else(|| self.bad_eof("parsing type"))?;
 
         let constructor = match token {
-            Token::TypeName(x) => Type::Constructor(self.to_location(span), x),
-            Token::PrimitiveTypeName(x) => Type::Primitive(self.to_location(span), x),
+            Token::TypeName(x) => {
+                let name = Name::new(self.to_location(span.clone()), x);
+                Type::Constructor(self.to_location(span), name)
+            }
+            Token::PrimitiveTypeName(x) => {
+                let name = Name::new(self.to_location(span.clone()), x);
+                Type::Primitive(self.to_location(span), name)
+            }
             _ => {
                 self.save(LocatedToken { token, span });
                 return self.parse_base_type();
@@ -1186,9 +1252,18 @@ impl<'lexer> Parser<'lexer> {
             self.next()?.ok_or_else(|| self.bad_eof("parsing type"))?;
 
         match token {
-            Token::TypeName(x) => Ok(Type::Constructor(self.to_location(span), x)),
-            Token::PrimitiveTypeName(x) => Ok(Type::Primitive(self.to_location(span), x)),
-            Token::ValueName(x) => Ok(Type::Variable(self.to_location(span), x)),
+            Token::TypeName(x) => {
+                let name = Name::new(self.to_location(span.clone()), x);
+                Ok(Type::Constructor(self.to_location(span), name))
+            }
+            Token::PrimitiveTypeName(x) => {
+                let name = Name::new(self.to_location(span.clone()), x);
+                Ok(Type::Primitive(self.to_location(span), name))
+            }
+            Token::ValueName(x) => {
+                let name = Name::new(self.to_location(span.clone()), x);
+                Ok(Type::Variable(self.to_location(span), name))
+            }
             Token::OpenParen => {
                 let t = self.parse_type()?;
                 let closer = self

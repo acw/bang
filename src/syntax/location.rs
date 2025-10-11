@@ -32,7 +32,10 @@ impl Span for Location {
 
 impl Location {
     pub fn new(file: &ArcIntern<PathBuf>, span: Range<usize>) -> Self {
-        Location { file: file.clone(), span }
+        Location {
+            file: file.clone(),
+            span,
+        }
     }
 
     pub fn extend_to(&self, other: &Location) -> Location {
