@@ -682,7 +682,256 @@ impl<'lexer> Parser<'lexer> {
     }
 
     fn parse_match_case(&mut self) -> Result<Option<MatchCase>, ParserError> {
-        unimplemented!()
+        // skip over anything we can just skip
+        loop {
+            let peeked = self
+                .next()?
+                .ok_or_else(|| self.bad_eof("looking for match case"))?;
+
+            if matches!(peeked.token, Token::Comma) {
+                continue;
+            }
+
+            let stop = matches!(peeked.token, Token::CloseBrace);
+
+            self.save(peeked);
+            if stop {
+                return Ok(None);
+            }
+
+            break;
+        }
+
+        let pattern = self.parse_pattern()?;
+
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for an open brace after 'match'"))?;
+        if !matches!(next.token, Token::Arrow) {
+            return Err(ParserError::UnexpectedToken {
+                file: self.file.clone(),
+                span: next.span,
+                token: next.token,
+                expected: "an arrow after a pattern, as part of a match case",
+            });
+        }
+
+        let consequent = self.parse_expression()?;
+
+        Ok(Some(MatchCase {
+            pattern,
+            consequent,
+        }))
+    }
+
+    pub fn parse_pattern(&mut self) -> Result<Pattern, ParserError> {
+        if let Ok(constant) = self.parse_constant() {
+            return Ok(Pattern::Constant(constant));
+        }
+
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for a pattern to match"))?;
+
+        match next.token {
+            Token::ValueName(x) => {
+                let name = Name::new(self.to_location(next.span), x);
+                Ok(Pattern::Variable(name))
+            }
+
+            Token::TypeName(x) => {
+                let type_name = Name::new(self.to_location(next.span.clone()), x);
+                let start = self.to_location(next.span);
+
+                let next = self
+                    .next()?
+                    .ok_or_else(|| self.bad_eof("looking for a pattern to match"))?;
+                match next.token {
+                    Token::OpenBrace => {
+                        let mut fields = vec![];
+
+                        while let Some(field_pattern) = self.parse_field_pattern()? {
+                            fields.push(field_pattern)
+                        }
+
+                        let final_brace = self.next()?.ok_or_else(|| {
+                            self.bad_eof("looking for closing brace in structure pattern.")
+                        })?;
+                        if !matches!(final_brace.token, Token::CloseBrace) {
+                            return Err(ParserError::UnexpectedToken {
+                                file: self.file.clone(),
+                                span: final_brace.span,
+                                token: final_brace.token,
+                                expected: "closing brace in structure pattern",
+                            });
+                        }
+                        let final_brace_location = self.to_location(final_brace.span);
+
+                        let structure_pattern = StructurePattern {
+                            location: start.extend_to(&final_brace_location),
+                            type_name,
+                            fields,
+                        };
+
+                        Ok(Pattern::Structure(structure_pattern))
+                    }
+
+                    Token::Colon => {
+                        let second_colon = self.next()?.ok_or_else(|| {
+                            self.bad_eof("looking for second colon in an enumeration pattern")
+                        })?;
+                        if !matches!(second_colon.token, Token::Colon) {
+                            return Err(ParserError::UnexpectedToken {
+                                file: self.file.clone(),
+                                span: second_colon.span,
+                                token: second_colon.token,
+                                expected: "second colon in an enumeration pattern",
+                            });
+                        }
+
+                        let vname = self.next()?.ok_or_else(|| {
+                            self.bad_eof("looking for enumeration value name in pattern")
+                        })?;
+
+                        let variant_name = match vname.token {
+                            Token::TypeName(s) => {
+                                let loc = self.to_location(vname.span.clone());
+                                Name::new(loc, s)
+                            }
+
+                            _ => {
+                                return Err(ParserError::UnexpectedToken {
+                                    file: self.file.clone(),
+                                    span: vname.span,
+                                    token: vname.token,
+                                    expected: "enumeration value name in pattern",
+                                });
+                            }
+                        };
+
+                        let mut final_location = self.to_location(vname.span);
+
+                        let argument = if let Some(maybe_paren) = self.next()? {
+                            if matches!(maybe_paren.token, Token::OpenParen) {
+                                let sub_pattern = self.parse_pattern()?;
+
+                                let tok = self.next()?.ok_or_else(|| {
+                                    self.bad_eof("looking for close paren after enum value argument")
+                                })?;
+                                if !matches!(tok.token, Token::CloseParen) {
+                                    return Err(ParserError::UnexpectedToken {
+                                        file: self.file.clone(),
+                                        span: tok.span,
+                                        token: tok.token,
+                                        expected: "close paren after enum value argument",
+                                    });
+                                }
+
+                                final_location = self.to_location(tok.span);
+
+                                Some(Box::new(sub_pattern))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        let location = start.extend_to(&final_location);
+
+                        let pattern = EnumerationPattern {
+                            location,
+                            type_name,
+                            variant_name,
+                            argument,
+                        };
+
+                        Ok(Pattern::EnumerationValue(pattern))
+                    }
+
+                    _ => Err(ParserError::UnexpectedToken {
+                        file: self.file.clone(),
+                        span: next.span,
+                        token: next.token,
+                        expected: "An '::' or '{' after a type name in a pattern",
+                    }),
+                }
+            }
+
+            _ => Err(ParserError::UnexpectedToken {
+                file: self.file.clone(),
+                span: next.span,
+                token: next.token,
+                expected: "The start of a pattern: a variable name or type name",
+            }),
+        }
+    }
+
+    fn parse_field_pattern(&mut self) -> Result<Option<(Name, Option<Pattern>)>, ParserError> {
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for structure pattern field name"))?;
+        let name = match next.token {
+            Token::CloseBrace => {
+                self.save(next);
+                return Ok(None);
+            }
+
+            Token::ValueName(s) => Name::new(self.to_location(next.span), s),
+
+            _ => {
+                return Err(ParserError::UnexpectedToken {
+                    file: self.file.clone(),
+                    span: next.span,
+                    token: next.token,
+                    expected: "a field name in a structure pattern",
+                });
+            }
+        };
+
+        let next = self.next()?.ok_or_else(|| {
+            self.bad_eof("looking for colon, comma, or brace after structure field name in pattern")
+        })?;
+        let sub_pattern = match next.token {
+            Token::Comma => None,
+
+            Token::CloseBrace => {
+                self.save(next);
+                None
+            }
+
+            Token::Colon => {
+                let subpattern = self.parse_pattern()?;
+                let next = self
+                    .next()?
+                    .ok_or_else(|| self.bad_eof(
+                        "looking for comma or close brace after structure field"))?;
+
+                match next.token {
+                    Token::Comma => {}
+                    Token::CloseBrace => self.save(next),
+                    _ => return Err(ParserError::UnexpectedToken {
+                        file: self.file.clone(),
+                        span: next.span,
+                        token: next.token,
+                        expected: "comma or close brace after structure field"
+                    }),
+                }
+
+                Some(subpattern)
+            }
+
+            _ => {
+                return Err(ParserError::UnexpectedToken {
+                    file: self.file.clone(),
+                    span: next.span,
+                    token: next.token,
+                    expected: "colon, comma, or brace after structure field name in pattern",
+                });
+            }
+        };
+
+        Ok(Some((name, sub_pattern)))
     }
 
     fn parse_if_expression(&mut self) -> Result<ConditionalExpr, ParserError> {
@@ -1120,21 +1369,26 @@ impl<'lexer> Parser<'lexer> {
                         };
 
                         let arg = if let Some(maybe_paren) = self.next()? {
-                            let expr = self.parse_expression()?;
+                            if matches!(maybe_paren.token, Token::OpenParen) {
+                                let expr = self.parse_expression()?;
 
-                            let tok = self.next()?.ok_or_else(|| {
-                                self.bad_eof("looking for close paren after enum value argument")
-                            })?;
-                            if !matches!(tok.token, Token::CloseParen) {
-                                return Err(ParserError::UnexpectedToken {
-                                    file: self.file.clone(),
-                                    span: tok.span,
-                                    token: tok.token,
-                                    expected: "close paren after enum value argument",
-                                });
+                                let tok = self.next()?.ok_or_else(|| {
+                                    self.bad_eof("looking for close paren after enum value argument")
+                                })?;
+                                if !matches!(tok.token, Token::CloseParen) {
+                                    return Err(ParserError::UnexpectedToken {
+                                        file: self.file.clone(),
+                                        span: tok.span,
+                                        token: tok.token,
+                                        expected: "close paren after enum value argument",
+                                    });
+                                }
+
+                                Some(Box::new(expr))
+                            } else {
+                                self.save(maybe_paren);
+                                None
                             }
-
-                            Some(Box::new(expr))
                         } else {
                             None
                         };

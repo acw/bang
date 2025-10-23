@@ -925,3 +925,68 @@ fn conditionals() {
      Ok(Expression::Conditional(cond)) if
       matches!(cond.test.as_ref(), Expression::Call(_, CallKind::Infix, _))));
 }
+
+#[test]
+#[allow(clippy::get_first)]
+fn patterns() {
+    let parse_pat = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new("test", lexer);
+        result.parse_pattern()
+    };
+
+    assert!(matches!(
+     parse_pat("1"),
+     Ok(Pattern::Constant(ConstantValue::Integer(_,
+      IntegerWithBase { value, .. }))) if
+      value == 1));
+    assert!(matches!(
+     parse_pat("x"),
+     Ok(Pattern::Variable(n)) if n.as_printed() == "x"));
+    assert!(matches!(
+     parse_pat("Cons::Pair(pair)"),
+     Ok(Pattern::EnumerationValue(EnumerationPattern{
+         type_name, variant_name, argument: Some(subpat), ..
+     })) if
+       type_name.as_printed() == "Cons" &&
+       variant_name.as_printed() == "Pair" &&
+       matches!(subpat.as_ref(), Pattern::Variable(p) if
+        p.as_printed() == "pair")));
+    assert!(matches!(
+     parse_pat("Structure{ field, other: something }"),
+     Ok(Pattern::Structure(StructurePattern { type_name, fields, .. })) if
+      type_name.as_printed() == "Structure" &&
+      fields.len() == 2 &&
+      matches!(fields.get(0), Some((n, None)) if n.as_printed() == "field") &&
+      matches!(fields.get(1), Some((n, Some(Pattern::Variable(s)))) if
+        n.as_printed() == "other" &&
+        s.as_printed() == "something")));
+    assert!(matches!(
+     parse_pat("Enumeration::Value(Structure { field, })"),
+     Ok(Pattern::EnumerationValue(EnumerationPattern {
+         type_name, variant_name, argument: Some(subpat), ..
+     })) if
+      type_name.as_printed() == "Enumeration" &&
+      variant_name.as_printed() == "Value" &&
+      matches!(subpat.as_ref(), Pattern::Structure(StructurePattern {
+       type_name, fields, ..
+     }) if
+       type_name.as_printed() == "Structure" &&
+       fields.len() == 1 &&
+       matches!(fields.first(), Some((f, None)) if
+        f.as_printed() == "field"))));
+    assert!(matches!(
+     parse_pat("Structure { field: Enumeration::Value, }"),
+     Ok(Pattern::Structure(StructurePattern {
+      type_name, fields, ..
+     })) if
+       type_name.as_printed() == "Structure" &&
+       fields.len() == 1 &&
+       matches!(fields.first(), Some((f, Some(subpat))) if
+         f.as_printed() == "field" &&
+         matches!(subpat, Pattern::EnumerationValue(EnumerationPattern {
+           type_name, variant_name, argument: None, ..
+         }) if
+          type_name.as_printed() == "Enumeration" &&
+          variant_name.as_printed() == "Value"))));
+}

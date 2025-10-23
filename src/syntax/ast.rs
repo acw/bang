@@ -139,7 +139,33 @@ pub struct MatchExpr {
 }
 
 #[derive(Debug)]
-pub struct MatchCase {}
+pub struct MatchCase {
+    pub pattern: Pattern,
+    pub consequent: Expression,
+}
+
+#[derive(Debug)]
+pub enum Pattern {
+    Constant(ConstantValue),
+    Variable(Name),
+    EnumerationValue(EnumerationPattern),
+    Structure(StructurePattern),
+}
+
+#[derive(Debug)]
+pub struct EnumerationPattern {
+    pub location: Location,
+    pub type_name: Name,
+    pub variant_name: Name,
+    pub argument: Option<Box<Pattern>>,
+}
+
+#[derive(Debug)]
+pub struct StructurePattern {
+    pub location: Location,
+    pub type_name: Name,
+    pub fields: Vec<(Name, Option<Pattern>)>,
+}
 
 #[derive(Debug)]
 pub enum CallKind {
