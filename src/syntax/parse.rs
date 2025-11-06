@@ -6,6 +6,15 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+/// A parser for a particular file.
+///
+/// This parser should be used for exactly one file, and its lifetime
+/// must be tied to the underlying lexer. However, after the parser is
+/// done, the resultant object should have no lifetime links to the
+/// original file, so it can be thrown away.
+///
+/// The parser includes information about operator precedence that is
+/// stateful.
 pub struct Parser<'lexer> {
     file: ArcIntern<PathBuf>,
     lexer: Lexer<'lexer>,
@@ -15,6 +24,12 @@ pub struct Parser<'lexer> {
     postfix_precedence_table: HashMap<String, u8>,
 }
 
+/// The directional associativity for an operator.
+///
+/// This directionality impacts whether (a + b + c) defaults to
+/// ((a + b) + c) or (a + (b + c)). It does not effect situations
+/// in which operator numeric precedence is different between
+/// operators.
 pub enum Associativity {
     Left,
     Right,
@@ -41,6 +56,8 @@ impl<'lexer> Parser<'lexer> {
 
     /// Add the given operator to our precedence table, at the given
     /// precedence level and associativity.
+    ///
+    /// This is used for infix operators, only.
     pub fn add_infix_precedence<S: ToString>(
         &mut self,
         operator: S,
@@ -57,16 +74,28 @@ impl<'lexer> Parser<'lexer> {
             .insert(operator.to_string(), actual_associativity);
     }
 
+    /// Add the given operator to our precedence table, at the given
+    /// precedence level and associativity.
+    ///
+    /// This is used for prefix operators, only.
     pub fn add_prefix_precedence<S: ToString>(&mut self, operator: S, level: u8) {
         self.prefix_precedence_table
             .insert(operator.to_string(), level * 2);
     }
 
+    /// Add the given operator to our precedence table, at the given
+    /// precedence level and associativity.
+    ///
+    /// This is used for postfix operators, only.
     pub fn add_postfix_precedence<S: ToString>(&mut self, operator: S, level: u8) {
         self.postfix_precedence_table
             .insert(operator.to_string(), level * 2);
     }
 
+    /// Get the precedence of the given operator.
+    ///
+    /// FIXME: This currently only functions on infix operators, not
+    /// prefix and postfix. In general, this can all be cleaned up.
     fn get_precedence(&self, name: &String) -> (u8, u8) {
         match self.infix_precedence_table.get(name) {
             None => (19, 20),
@@ -74,7 +103,12 @@ impl<'lexer> Parser<'lexer> {
         }
     }
 
-    /// Get the next token.
+    /// Get the next token from the input stream, or None if we're at
+    /// the end of a stream.
+    ///
+    /// Ok(None) represents "we have reached the end of the stream", while
+    /// an Err(_) means that we ran into some sort of error (UTF-8 formatting,
+    /// lexing, IO, etc.) in reading the stream.
     pub fn next(&mut self) -> Result<Option<LocatedToken>, ParserError> {
         let result = self.known_tokens.pop();
 
@@ -91,21 +125,98 @@ impl<'lexer> Parser<'lexer> {
         }
     }
 
+    /// Save the given token back to the top of the stream.
+    ///
+    /// This is essentially an "undo" on next(), or an alternative path for
+    /// peeking at the next token in the stream.
     fn save(&mut self, token: LocatedToken) {
         self.known_tokens.push(token)
     }
 
-    fn bad_eof(&mut self, place: &'static str) -> ParserError {
-        ParserError::UnacceptableEof {
-            file: self.file.clone(),
-            place,
+    /// Get the location of the next token in the stream.
+    ///
+    /// This will return an error if we're at the end of the file.
+    fn current_location(&mut self) -> Result<Location, ParserError> {
+        let current = self.next()?;
+        match current {
+            None => Err(self.bad_eof("trying to get current location")),
+            Some(token) => {
+                let retval = self.to_location(token.span.clone());
+                self.save(token);
+                Ok(retval)
+            }
         }
     }
 
+    /// Generate the parser error that should happen when we hit an EOF
+    /// in a bad place.
+    fn bad_eof<S: ToString>(&mut self, place: S) -> ParserError {
+        ParserError::UnacceptableEof {
+            file: self.file.clone(),
+            place: place.to_string(),
+        }
+    }
+
+    /// Convert an offset into a formal location that can be saved off
+    /// into ASTs.
     fn to_location(&self, span: Range<usize>) -> Location {
         Location::new(&self.file, span)
     }
 
+    /// See if the next token is the keyword, as expected.
+    ///
+    /// If it isn't, this routine will provide an error, but it will make
+    /// sure to put the token back into the stream.
+    fn require_keyword(&mut self, keyword: &'static str) -> Result<Location, ParserError> {
+        match self.next()? {
+            None => Err(self.bad_eof(format!("looking for keyword '{keyword}'"))),
+            Some(ltoken) => match ltoken.token {
+                Token::ValueName(s) if s.as_str() == keyword => Ok(self.to_location(ltoken.span)),
+                _ => {
+                    self.save(ltoken.clone());
+                    Err(ParserError::UnexpectedToken {
+                        file: self.file.clone(),
+                        span: ltoken.span,
+                        token: ltoken.token,
+                        expected: format!("keyword {keyword}"),
+                    })
+                }
+            },
+        }
+    }
+
+    /// See if the next token is the given one, as expected.
+    ///
+    /// If it isn't, this routine will provide an error, but it will make
+    /// sure to put the token back into the stream.
+    fn require_token(
+        &mut self,
+        token: Token,
+        place: &'static str,
+    ) -> Result<Location, ParserError> {
+        let message = || format!("looking for '{token}' in {place}");
+        let next = self.next()?.ok_or_else(|| self.bad_eof(message()))?;
+
+        if next.token != token {
+            self.save(next.clone());
+            Err(ParserError::UnexpectedToken {
+                file: self.file.clone(),
+                span: next.span,
+                token: next.token,
+                expected: message(),
+            })
+        } else {
+            Ok(self.to_location(next.span))
+        }
+    }
+
+    /// Parse the top level file associated with a Bang module.
+    ///
+    /// This will expect to read until EOF, and will fail or stall
+    /// forever if there is no EOF, or the EOF ends in the wrong
+    /// place. So this should *not* be used for interactive sessions,
+    /// because those are unlikely to have EOFs in the appropriate
+    /// places.
     pub fn parse_module(&mut self) -> Result<Module, ParserError> {
         let mut definitions = vec![];
 
@@ -120,11 +231,16 @@ impl<'lexer> Parser<'lexer> {
         }
     }
 
+    /// Parse a definition in a file (structure, enumeration, value, etc.).
+    ///
+    /// This will read a definition. If there's an error, it's very likely the
+    /// input stream will be corrupted, so you probably don't want to try to
+    /// recover. You can, obviously.
     pub fn parse_definition(&mut self) -> Result<Definition, ParserError> {
         let (export, start) = self.parse_export_class()?;
         let type_restrictions = self.parse_type_restrictions()?;
         let definition = self.parse_def()?;
-        let location = definition.location().merge_span(start);
+        let location = definition.location().extend_to(&start);
 
         Ok(Definition {
             location,
@@ -134,42 +250,32 @@ impl<'lexer> Parser<'lexer> {
         })
     }
 
-    fn parse_export_class(&mut self) -> Result<(ExportClass, Range<usize>), ParserError> {
-        let maybe_export = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for possible export"))?;
-
-        if matches!(maybe_export.token, Token::ValueName(ref x) if x == "export") {
-            Ok((ExportClass::Public, maybe_export.span))
+    /// Parse the export class for the current definition.
+    ///
+    /// If there isn't an 'export' declaration, then this will return 'private',
+    /// because if it hasn't been declared exported then it's private. But this
+    /// does mean that a future parsing error will be assumed to be a private
+    /// declaration.
+    fn parse_export_class(&mut self) -> Result<(ExportClass, Location), ParserError> {
+        if let Ok(span) = self.require_keyword("export") {
+            Ok((ExportClass::Public, span))
         } else {
-            let start = maybe_export.span.clone();
-            self.save(maybe_export);
+            let start = self.current_location()?;
             Ok((ExportClass::Private, start))
         }
     }
 
+    /// Parse a type restriction and return it.
+    ///
+    /// Like the export class parsing, parsing type restrictions has a clear
+    /// default (no restrictions) when the input doesn't lead with the appropriate
+    /// keyword. As a result, this can generate a result even in cases in which
+    /// the input is empty.
     pub fn parse_type_restrictions(&mut self) -> Result<TypeRestrictions, ParserError> {
-        let Some(maybe_restrict) = self.next()? else {
-            return Ok(TypeRestrictions::empty());
-        };
-
-        if !matches!(maybe_restrict.token, Token::ValueName(ref x) if x == "restrict") {
-            self.save(maybe_restrict);
+        if self.require_keyword("restrict").is_err() {
             return Ok(TypeRestrictions::empty());
         }
-
-        let maybe_paren = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("Looking for open paren after restrict"))?;
-
-        if !matches!(maybe_paren.token, Token::OpenParen) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: maybe_paren.span,
-                token: maybe_paren.token,
-                expected: "open parenthesis, following the restrict keyword",
-            });
-        }
+        let _ = self.require_token(Token::OpenParen, "type restriction")?;
 
         let mut restrictions = vec![];
 
@@ -177,21 +283,19 @@ impl<'lexer> Parser<'lexer> {
             restrictions.push(type_restriction);
         }
 
-        let maybe_paren = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("Looking for open paren after restrict"))?;
-        if !matches!(maybe_paren.token, Token::CloseParen) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: maybe_paren.span,
-                token: maybe_paren.token,
-                expected: "close parenthesis following type restrictions",
-            });
-        }
-
+        let _ = self.require_token(Token::CloseParen, "type restriction")?;
         Ok(TypeRestrictions { restrictions })
     }
 
+    /// Parse a single type retriction.
+    ///
+    /// A type restriction should consist of a constructor token followed by
+    /// some number of arguments. We parse this in the obvious way, stopping
+    /// the input when we hit something that isn't a base type.
+    ///
+    /// Note that, because of this, we might end up in a situation in which
+    /// we throw an error after consuming a bunch of input, meaning that it
+    /// will be impossible to recover.
     fn parse_type_restriction(&mut self) -> Result<Option<TypeRestriction>, ParserError> {
         let maybe_constructor = self
             .next()?
@@ -220,7 +324,8 @@ impl<'lexer> Parser<'lexer> {
                     file: self.file.clone(),
                     span: maybe_constructor.span,
                     token: weird,
-                    expected: "Constructor name, comma, or close parenthesis in type restriction",
+                    expected: "Constructor name, comma, or close parenthesis in type restriction"
+                        .into(),
                 });
             }
         };
@@ -248,6 +353,13 @@ impl<'lexer> Parser<'lexer> {
         Ok(Some(restriction))
     }
 
+    /// Parse a definition.
+    ///
+    /// A definition can include a structure definition, the definition of an enumeration,
+    /// the declaration of some sort of operator, or a value definition. (This statement
+    /// assumes that you consider a function a value, which is reasonable.)
+    ///
+    /// If this returns an error, you should not presume that you can recover from it.
     fn parse_def(&mut self) -> Result<Def, ParserError> {
         let next = self
             .next()?
@@ -261,6 +373,10 @@ impl<'lexer> Parser<'lexer> {
             return Ok(Def::Enumeration(enumeration));
         }
 
+        if let Ok(operator) = self.parse_operator() {
+            return Ok(Def::Operator(operator));
+        }
+
         if let Ok(fun_or_val) = self.parse_function_or_value() {
             return Ok(fun_or_val);
         }
@@ -269,71 +385,31 @@ impl<'lexer> Parser<'lexer> {
             file: self.file.clone(),
             span: next.span,
             token: next.token,
-            expected: "'structure', 'enumeration', or a value identifier",
+            expected: "'structure', 'enumeration', or a value identifier".into(),
         })
     }
 
+    /// Parse a structure definition.
+    ///
+    /// Structure definitions should start with the keyword "structure". If they
+    /// don't, this will return, but it will do so in a way that is recoverable.
+    /// Otherwise, we'll start eating tokens and who knows what state we'll end
+    /// in.
     pub fn parse_structure(&mut self) -> Result<StructureDef, ParserError> {
-        let structure_token = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for definition"))?;
-        if !matches!(structure_token.token, Token::ValueName(ref s) if s == "structure") {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: structure_token.span,
-                token: structure_token.token,
-                expected: "the 'structure' keyword",
-            });
-        }
+        let start_location = self.require_keyword("structure")?;
 
-        let name = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for structure name"))?;
-        let structure_name = match name.token {
-            Token::TypeName(str) => Name::new(self.to_location(name.span), str),
-            _ => {
-                return Err(ParserError::UnexpectedToken {
-                    file: self.file.clone(),
-                    span: name.span,
-                    token: name.token,
-                    expected: "a structure name",
-                });
-            }
-        };
-
-        let brace = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("the open brace after a structure name"))?;
-        if !matches!(brace.token, Token::OpenBrace) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: brace.span,
-                token: brace.token,
-                expected: "the brace after a structure name",
-            });
-        }
+        let structure_name = self.parse_type_name("structure definition")?;
+        self.require_token(Token::OpenBrace, "after a structure name")?;
 
         let mut fields = vec![];
-
         while let Some(field_definition) = self.parse_field_definition()? {
             fields.push(field_definition);
         }
 
-        let brace = self.next()?.ok_or_else(|| {
-            self.bad_eof("the close brace after at the end of a structure definition")
-        })?;
-        if !matches!(brace.token, Token::CloseBrace) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: brace.span,
-                token: brace.token,
-                expected: "the brace at the end of a structure definition",
-            });
-        }
+        let brace =
+            self.require_token(Token::CloseBrace, "at the end of a structure definition")?;
 
-        let location = self
-            .to_location(structure_token.span)
-            .extend_to(&self.to_location(brace.span));
+        let location = start_location.extend_to(&brace);
 
         Ok(StructureDef {
             name: structure_name,
@@ -342,66 +418,38 @@ impl<'lexer> Parser<'lexer> {
         })
     }
 
+    /// Parse a name and field value for a field inside a structure constructor.
+    ///
+    /// In this case, what we mean is the full "foo: bar" syntax that goes inside a structure
+    /// expression to declare a value.
     pub fn parse_field_value(&mut self) -> Result<Option<FieldValue>, ParserError> {
-        let maybe_name = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("parsing field definition"))?;
-
-        let field = match maybe_name.token {
-            Token::ValueName(x) => Name::new(self.to_location(maybe_name.span), x),
-            _ => {
-                self.save(maybe_name.clone());
-                return Ok(None);
-            }
+        let Ok(field) = self.parse_name("structure value") else {
+            return Ok(None);
         };
-
-        let maybe_colon = self.next()?.ok_or_else(|| {
-            self.bad_eof("looking for colon, comma, or close brace after field name")
-        })?;
-        if !matches!(maybe_colon.token, Token::Colon) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: maybe_colon.span,
-                token: maybe_colon.token,
-                expected: "colon after field name in constructor",
-            });
-        }
-
+        self.require_token(Token::Colon, "after a field name")?;
         let value = self.parse_expression()?;
 
-        let end_token = self.next()?.ok_or_else(|| {
-            self.bad_eof("looking for comma or close brace after field definition")
-        })?;
-        if !matches!(end_token.token, Token::Comma) {
+        if let Some(end_token) = self.next()?
+            && !matches!(end_token.token, Token::Comma)
+        {
             self.save(end_token);
         }
 
         Ok(Some(FieldValue { field, value }))
     }
 
+    /// Parse a name and field definition for a field inside a structure definition.
+    ///
+    /// In this case, what we mean is the full "foo: Bar" syntax that goes inside a
+    /// structure type definition. Note, though, that we allow the ": Bar" to be
+    /// elided in the case that the user wants to try to infer the type. In addition,
+    /// recall that structure types can declare their individual fields public or
+    /// not, so that information gets parsed as well.
     pub fn parse_field_definition(&mut self) -> Result<Option<StructureField>, ParserError> {
-        let (export, start) = self.parse_export_class()?;
-        let maybe_name = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("parsing field definition"))?;
-
-        let name = match maybe_name.token {
-            Token::ValueName(x) => Name::new(self.to_location(maybe_name.span.clone()), x),
-            _ => {
-                self.save(maybe_name.clone());
-                if matches!(export, ExportClass::Private) {
-                    return Ok(None);
-                } else {
-                    return Err(ParserError::UnexpectedToken {
-                        file: self.file.clone(),
-                        span: maybe_name.span,
-                        token: maybe_name.token,
-                        expected: "a field name",
-                    });
-                }
-            }
+        let (export, start_location) = self.parse_export_class()?;
+        let Ok(name) = self.parse_name("field definition") else {
+            return Ok(None);
         };
-        let start_location = self.to_location(start);
 
         let maybe_colon = self.next()?.ok_or_else(|| {
             self.bad_eof("looking for colon, comma, or close brace after field name")
@@ -420,7 +468,7 @@ impl<'lexer> Parser<'lexer> {
                     file: self.file.clone(),
                     span: maybe_colon.span,
                     token: maybe_colon.token,
-                    expected: "colon, comma, or close brace after field name",
+                    expected: "colon, comma, or close brace after field name".into(),
                 });
             }
         };
@@ -440,14 +488,14 @@ impl<'lexer> Parser<'lexer> {
                     file: self.file.clone(),
                     span: end_token.span,
                     token: end_token.token,
-                    expected: "looking for comma or close brace after field definition",
+                    expected: "looking for comma or close brace after field definition".into(),
                 });
             }
         };
 
         let end_location = maybe_end_location
             .or_else(|| field_type.as_ref().map(|x| x.location()))
-            .unwrap_or_else(|| self.to_location(maybe_name.span));
+            .unwrap_or_else(|| name.location().unwrap().clone());
         let location = start_location.extend_to(&end_location);
 
         Ok(Some(StructureField {
@@ -458,67 +506,24 @@ impl<'lexer> Parser<'lexer> {
         }))
     }
 
+    /// Parse an enumeration declaration from the input stream.
+    ///
+    /// As with structures, this will cleanly abort if the first token is wrong,
+    /// but if it makes it past that token, all bets are off.
     pub fn parse_enumeration(&mut self) -> Result<EnumerationDef, ParserError> {
-        let enumeration_token = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for definition"))?;
-        if !matches!(enumeration_token.token, Token::ValueName(ref e) if e == "enumeration") {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: enumeration_token.span,
-                token: enumeration_token.token,
-                expected: "the 'enumeration' keyword",
-            });
-        }
+        let start_location = self.require_keyword("enumeration")?;
+        let enumeration_name = self.parse_type_name("enumeration definition")?;
 
-        let name = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for enumeration name"))?;
-        let enumeration_name = match name.token {
-            Token::TypeName(str) => Name::new(self.to_location(name.span), str),
-            _ => {
-                return Err(ParserError::UnexpectedToken {
-                    file: self.file.clone(),
-                    span: name.span,
-                    token: name.token,
-                    expected: "an enumeration name",
-                });
-            }
-        };
-
-        let brace = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("the open brace after an enumeration name"))?;
-        if !matches!(brace.token, Token::OpenBrace) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: brace.span,
-                token: brace.token,
-                expected: "the brace after an enumeration name",
-            });
-        }
+        self.require_token(Token::OpenBrace, "after enumeration name")?;
 
         let mut variants = vec![];
-
         while let Some(variant_definition) = self.parse_enum_variant()? {
             variants.push(variant_definition);
         }
 
-        let brace = self.next()?.ok_or_else(|| {
-            self.bad_eof("the close brace after at the end of an enumeration definition")
-        })?;
-        if !matches!(brace.token, Token::CloseBrace) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: brace.span,
-                token: brace.token,
-                expected: "the brace at the end of an enumeration definition",
-            });
-        }
+        let brace = self.require_token(Token::CloseBrace, "after enumeration options")?;
 
-        let location = self
-            .to_location(enumeration_token.span)
-            .extend_to(&self.to_location(brace.span));
+        let location = start_location.extend_to(&brace);
 
         Ok(EnumerationDef {
             name: enumeration_name,
@@ -527,46 +532,22 @@ impl<'lexer> Parser<'lexer> {
         })
     }
 
+    /// Parse a variant of an enumeration in the enumeration definition.
+    ///
+    /// At this point in bang's lifecycle, enumerations can have zero or one arguments,
+    /// but no more, which simplified parsing a trace.
     pub fn parse_enum_variant(&mut self) -> Result<Option<EnumerationVariant>, ParserError> {
-        let maybe_name = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for enumeration name"))?;
-        let name = match maybe_name.token {
-            Token::TypeName(x) => Name::new(self.to_location(maybe_name.span.clone()), x),
-            Token::CloseBrace => {
-                self.save(maybe_name);
-                return Ok(None);
-            }
-            _ => {
-                self.save(maybe_name.clone());
-                return Err(ParserError::UnexpectedToken {
-                    file: self.file.clone(),
-                    span: maybe_name.span,
-                    token: maybe_name.token,
-                    expected: "variant name (identifier starting with a capital)",
-                });
-            }
+        let Ok(name) = self.parse_type_name("variant definition") else {
+            return Ok(None);
         };
-        let start_location = self.to_location(maybe_name.span);
+        let start_location = name.location().unwrap().clone();
 
         let maybe_paren = self
             .next()?
             .ok_or_else(|| self.bad_eof("trying to understand enumeration variant"))?;
         let (argument, arg_location) = if matches!(maybe_paren.token, Token::OpenParen) {
             let t = self.parse_type()?;
-
-            let maybe_close = self
-                .next()?
-                .ok_or_else(|| self.bad_eof("trying to parse a enumeration variant's type"))?;
-            if !matches!(maybe_close.token, Token::CloseParen) {
-                return Err(ParserError::UnexpectedToken {
-                    file: self.file.clone(),
-                    span: maybe_close.span,
-                    token: maybe_close.token,
-                    expected: "close paren to end an enumeration variant's type argument",
-                });
-            }
-
+            self.require_token(Token::CloseParen, "variant's type argument")?;
             let location = t.location();
             (Some(t), location)
         } else {
@@ -589,7 +570,7 @@ impl<'lexer> Parser<'lexer> {
                     file: self.file.clone(),
                     span: ender.span,
                     token: ender.token,
-                    expected: "comma or close brace after enumeration variant",
+                    expected: "comma or close brace after enumeration variant".into(),
                 });
             }
         };
@@ -603,8 +584,88 @@ impl<'lexer> Parser<'lexer> {
         }))
     }
 
-    fn parse_function_or_value(&mut self) -> Result<Def, ParserError> {
+    /// Parse an operator declaration.
+    ///
+    /// Operator declarations are the only thing where we immediately modify the state
+    /// of the parser, allowing the operator to be used immediately after it is declared.
+    /// Note that by "declare", we mean that the operator is given a variable that it maps
+    /// to; that variable can be declared further on in the file or even in another module,
+    /// as we won't try to resolve it until later.
+    ///
+    /// Like most definitions, we'll abort cleanly if the first token isn't the "operator"
+    /// keyword, but all bets are off after that.
+    pub fn parse_operator(&mut self) -> Result<OperatorDef, ParserError> {
+        let _operator = self.require_keyword("operator")?;
+
         unimplemented!()
+    }
+
+    /// Parse a function or a value.
+    ///
+    /// Technically speaking, functions are values, so the name can feel a little silly.
+    /// However, we have some nice syntax for functions that avoids the need to put lambdas
+    /// everywhere, and so we sort of treat them differently.
+    fn parse_function_or_value(&mut self) -> Result<Def, ParserError> {
+        let name = self.parse_name("function or value definition")?;
+        let start = name.location().unwrap().clone();
+
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("type or value for definition"))?;
+
+        match next.token {
+            // If we see an open parenthesis next, we're looking at a nicely-formatted
+            // function definition, such as:
+            //
+            // factorial(x: Int) : Int {
+            //    match x {
+            //      1 => 1,
+            //      x => x * fact(x - 1),
+            //    }
+            // }
+            // 
+            // Or any of many variations of that.
+            Token::OpenParen => {
+                unimplemented!()
+            }
+
+            // If we see a colon, then someone's giving us a type for what is probably
+            // some form of simple constant, such as:
+            //
+            // foo : Int = 4
+            //
+            // But honestly, there's a lot of odd possibilities of complicated things
+            // they could write there.
+            Token::Colon => {
+                unimplemented!()
+            }
+
+            // If we see an equal sign, we're jumping right to the value part of the
+            // definition, and we're doing something like this:
+            //
+            // foo = 4
+            //
+            // Again, though, you could write all sorts of interesting things after
+            // that.
+            Token::OperatorName(eq) if eq == "=" => {
+                let value = self.parse_expression()?;
+
+                Ok(Def::Value(ValueDef {
+                    name,
+                    location: start.extend_to(&value.location()),
+                    value,
+                }))
+            }
+
+            // Those should be the only cases, so if we get here, something weird
+            // is going on.
+            _ => Err(ParserError::UnexpectedToken {
+                file: self.file.clone(),
+                span: next.span,
+                token: next.token,
+                expected: "open parenthesis, colon, or equals after variable in definition".into(),
+            }),
+        }
     }
 
     pub fn parse_expression(&mut self) -> Result<Expression, ParserError> {
@@ -634,7 +695,7 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "an 'match' to start a pattern match",
+                expected: "an 'match' to start a pattern match".into(),
             });
         }
         let start = self.to_location(next.span);
@@ -649,7 +710,7 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "an open brace after the match expression",
+                expected: "an open brace after the match expression".into(),
             });
         }
 
@@ -667,7 +728,7 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "a close brace to end a match expression",
+                expected: "a close brace to end a match expression".into(),
             });
         }
         let end = self.to_location(next.span);
@@ -712,7 +773,7 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "an arrow after a pattern, as part of a match case",
+                expected: "an arrow after a pattern, as part of a match case".into(),
             });
         }
 
@@ -762,7 +823,7 @@ impl<'lexer> Parser<'lexer> {
                                 file: self.file.clone(),
                                 span: final_brace.span,
                                 token: final_brace.token,
-                                expected: "closing brace in structure pattern",
+                                expected: "closing brace in structure pattern".into(),
                             });
                         }
                         let final_brace_location = self.to_location(final_brace.span);
@@ -776,19 +837,7 @@ impl<'lexer> Parser<'lexer> {
                         Ok(Pattern::Structure(structure_pattern))
                     }
 
-                    Token::Colon => {
-                        let second_colon = self.next()?.ok_or_else(|| {
-                            self.bad_eof("looking for second colon in an enumeration pattern")
-                        })?;
-                        if !matches!(second_colon.token, Token::Colon) {
-                            return Err(ParserError::UnexpectedToken {
-                                file: self.file.clone(),
-                                span: second_colon.span,
-                                token: second_colon.token,
-                                expected: "second colon in an enumeration pattern",
-                            });
-                        }
-
+                    Token::DoubleColon => {
                         let vname = self.next()?.ok_or_else(|| {
                             self.bad_eof("looking for enumeration value name in pattern")
                         })?;
@@ -804,7 +853,7 @@ impl<'lexer> Parser<'lexer> {
                                     file: self.file.clone(),
                                     span: vname.span,
                                     token: vname.token,
-                                    expected: "enumeration value name in pattern",
+                                    expected: "enumeration value name in pattern".into(),
                                 });
                             }
                         };
@@ -816,14 +865,16 @@ impl<'lexer> Parser<'lexer> {
                                 let sub_pattern = self.parse_pattern()?;
 
                                 let tok = self.next()?.ok_or_else(|| {
-                                    self.bad_eof("looking for close paren after enum value argument")
+                                    self.bad_eof(
+                                        "looking for close paren after enum value argument",
+                                    )
                                 })?;
                                 if !matches!(tok.token, Token::CloseParen) {
                                     return Err(ParserError::UnexpectedToken {
                                         file: self.file.clone(),
                                         span: tok.span,
                                         token: tok.token,
-                                        expected: "close paren after enum value argument",
+                                        expected: "close paren after enum value argument".into(),
                                     });
                                 }
 
@@ -853,7 +904,7 @@ impl<'lexer> Parser<'lexer> {
                         file: self.file.clone(),
                         span: next.span,
                         token: next.token,
-                        expected: "An '::' or '{' after a type name in a pattern",
+                        expected: "An '::' or '{' after a type name in a pattern".into(),
                     }),
                 }
             }
@@ -862,7 +913,7 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "The start of a pattern: a variable name or type name",
+                expected: "The start of a pattern: a variable name or type name".into(),
             }),
         }
     }
@@ -884,7 +935,7 @@ impl<'lexer> Parser<'lexer> {
                     file: self.file.clone(),
                     span: next.span,
                     token: next.token,
-                    expected: "a field name in a structure pattern",
+                    expected: "a field name in a structure pattern".into(),
                 });
             }
         };
@@ -902,20 +953,21 @@ impl<'lexer> Parser<'lexer> {
 
             Token::Colon => {
                 let subpattern = self.parse_pattern()?;
-                let next = self
-                    .next()?
-                    .ok_or_else(|| self.bad_eof(
-                        "looking for comma or close brace after structure field"))?;
+                let next = self.next()?.ok_or_else(|| {
+                    self.bad_eof("looking for comma or close brace after structure field")
+                })?;
 
                 match next.token {
                     Token::Comma => {}
                     Token::CloseBrace => self.save(next),
-                    _ => return Err(ParserError::UnexpectedToken {
-                        file: self.file.clone(),
-                        span: next.span,
-                        token: next.token,
-                        expected: "comma or close brace after structure field"
-                    }),
+                    _ => {
+                        return Err(ParserError::UnexpectedToken {
+                            file: self.file.clone(),
+                            span: next.span,
+                            token: next.token,
+                            expected: "comma or close brace after structure field".into(),
+                        });
+                    }
                 }
 
                 Some(subpattern)
@@ -926,7 +978,7 @@ impl<'lexer> Parser<'lexer> {
                     file: self.file.clone(),
                     span: next.span,
                     token: next.token,
-                    expected: "colon, comma, or brace after structure field name in pattern",
+                    expected: "colon, comma, or brace after structure field name in pattern".into(),
                 });
             }
         };
@@ -943,7 +995,7 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "an 'if' to start a conditional",
+                expected: "an 'if' to start a conditional".into(),
             });
         }
         let start = self.to_location(next.span);
@@ -993,7 +1045,7 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "an open brace to start a block",
+                expected: "an open brace to start a block".into(),
             });
         }
         let start = self.to_location(next.span);
@@ -1017,14 +1069,14 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "a close brace to end a block",
+                expected: "a close brace to end a block".into(),
             });
         }
         let end = self.to_location(next.span);
 
         if !ended_with_expr {
             let void_name = Name::new(end.clone(), "%prim%void");
-            let void_ref = Expression::Reference(void_name);
+            let void_ref = Expression::Reference(end.clone(), void_name);
             let void_call = Expression::Call(Box::new(void_ref), CallKind::Normal, vec![]);
             statements.push(Statement::Expression(void_call));
         }
@@ -1033,36 +1085,34 @@ impl<'lexer> Parser<'lexer> {
     }
 
     pub fn parse_statement(&mut self) -> Result<Option<(Statement, bool)>, ParserError> {
-        loop {
-            let next = self
-                .next()?
-                .ok_or_else(|| self.bad_eof("looking for a statement or close brace"))?;
+        let next = self
+            .next()?
+            .ok_or_else(|| self.bad_eof("looking for a statement or close brace"))?;
 
-            match next.token {
-                Token::CloseBrace => {
+        match next.token {
+            Token::CloseBrace => {
+                self.save(next);
+                Ok(None)
+            }
+
+            Token::ValueName(ref l) if l == "let" => {
+                self.save(next);
+                Ok(Some((Statement::Binding(self.parse_let()?), false)))
+            }
+
+            _ => {
+                self.save(next);
+                let expr = Statement::Expression(self.parse_expression()?);
+
+                let next = self
+                    .next()?
+                    .ok_or_else(|| self.bad_eof("looking for semicolon or close brace"))?;
+
+                if matches!(next.token, Token::Semi) {
+                    Ok(Some((expr, false)))
+                } else {
                     self.save(next);
-                    return Ok(None);
-                }
-
-                Token::ValueName(ref l) if l == "let" => {
-                    self.save(next);
-                    return Ok(Some((Statement::Binding(self.parse_let()?), false)));
-                }
-
-                _ => {
-                    self.save(next);
-                    let expr = Statement::Expression(self.parse_expression()?);
-
-                    let next = self
-                        .next()?
-                        .ok_or_else(|| self.bad_eof("looking for semicolon or close brace"))?;
-
-                    if matches!(next.token, Token::Semi) {
-                        return Ok(Some((expr, false)));
-                    } else {
-                        self.save(next);
-                        return Ok(Some((expr, true)));
-                    }
+                    Ok(Some((expr, true)))
                 }
             }
         }
@@ -1078,7 +1128,7 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "a 'let' to open a binding statement",
+                expected: "a 'let' to open a binding statement".into(),
             });
         }
         let start = self.to_location(next.span);
@@ -1101,7 +1151,7 @@ impl<'lexer> Parser<'lexer> {
                     file: self.file.clone(),
                     span: next.span,
                     token: next.token,
-                    expected: "a variable name for the let binding",
+                    expected: "a variable name for the let binding".into(),
                 });
             }
         };
@@ -1114,7 +1164,7 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "an '=' after the variable name in a let binding",
+                expected: "an '=' after the variable name in a let binding".into(),
             });
         }
 
@@ -1128,7 +1178,7 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "a semicolon to finish a let statement",
+                expected: "a semicolon to finish a let statement".into(),
             });
         }
         let end = self.to_location(next.span);
@@ -1155,13 +1205,14 @@ impl<'lexer> Parser<'lexer> {
                         file: self.file.clone(),
                         span: next.span,
                         token: next.token,
-                        expected: "a base expression of a tighter-binding prefix operator",
+                        expected: "a base expression of a tighter-binding prefix operator".into(),
                     });
                 }
 
                 let rhs = self.parse_arithmetic(*pre_prec)?;
-                let opname = Name::new(self.to_location(next.span), n);
-                let op_expr = Expression::Reference(opname);
+                let location = self.to_location(next.span);
+                let opname = Name::new(location.clone(), n);
+                let op_expr = Expression::Reference(location, opname);
 
                 Expression::Call(Box::new(op_expr), CallKind::Prefix, vec![rhs])
             } else {
@@ -1192,14 +1243,15 @@ impl<'lexer> Parser<'lexer> {
                             break;
                         }
 
-                        let opname = Name::new(self.to_location(next.span), n);
-                        let op_expr = Expression::Reference(opname);
+                        let location = self.to_location(next.span);
+                        let opname = Name::new(location.clone(), n);
+                        let op_expr = Expression::Reference(location, opname);
 
                         lhs = Expression::Call(Box::new(op_expr), CallKind::Postfix, vec![lhs]);
                         continue;
                     }
 
-                    let (left_pr, right_pr) = self.get_precedence(&n);
+                    let (left_pr, right_pr) = self.get_precedence(n);
 
                     if left_pr < level {
                         self.save(next);
@@ -1207,8 +1259,9 @@ impl<'lexer> Parser<'lexer> {
                     }
 
                     let rhs = self.parse_arithmetic(right_pr)?;
-                    let name = Name::new(self.to_location(next.span), n);
-                    let opref = Box::new(Expression::Reference(name));
+                    let location = self.to_location(next.span);
+                    let name = Name::new(location.clone(), n);
+                    let opref = Box::new(Expression::Reference(location, name));
                     let args = vec![lhs, rhs];
 
                     lhs = Expression::Call(opref, CallKind::Infix, args);
@@ -1234,7 +1287,7 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span: next.span,
                 token: next.token,
-                expected: "open paren for call arguments",
+                expected: "open paren for call arguments".into(),
             });
         }
 
@@ -1264,7 +1317,7 @@ impl<'lexer> Parser<'lexer> {
                         file: self.file.clone(),
                         span: next.span,
                         token: next.token,
-                        expected: "comma or close paren in function arguments",
+                        expected: "comma or close paren in function arguments".into(),
                     });
                 }
             }
@@ -1273,6 +1326,23 @@ impl<'lexer> Parser<'lexer> {
         Ok(args)
     }
 
+    /// Parse a base expression.
+    ///
+    /// A base expression can be any number of things:
+    ///   * A constant, of any form
+    ///   * A variable name
+    ///   * A constructor, like a structure constructor or an enumeration value
+    ///   * A parenthesized expression of some other form
+    ///   * A block
+    ///
+    /// Most of these can be identified by the first token in the input
+    /// stream. If we don't recognize a valid first token in the input
+    /// stream, we return an error and restore the original input stream
+    /// state. However, if the first token leads us to a valid next state,
+    /// we may not be able to recover the original stream state on an error.
+    ///
+    /// As a result, this should only be called when you're very confident
+    /// that the next thing is going to be an expression.
     pub fn parse_base_expression(&mut self) -> Result<Expression, ParserError> {
         if let Ok(v) = self.parse_constant() {
             return Ok(Expression::Value(v));
@@ -1285,29 +1355,17 @@ impl<'lexer> Parser<'lexer> {
         match next.token {
             Token::OpenBrace => {
                 self.save(next);
-                return self.parse_block();
+                self.parse_block()
             }
 
             Token::OpenParen => {
                 let inner = self.parse_expression()?;
-                let hopefully_close = self
-                    .next()?
-                    .ok_or_else(|| self.bad_eof("looking for close paren to finish expression"))?;
-                if matches!(hopefully_close.token, Token::CloseParen) {
-                    Ok(inner)
-                } else {
-                    self.save(hopefully_close.clone());
-                    Err(ParserError::UnexpectedToken {
-                        file: self.file.clone(),
-                        span: hopefully_close.span,
-                        token: hopefully_close.token,
-                        expected: "close paren after expression",
-                    })
-                }
+                self.require_token(Token::CloseParen, "the end of a parenthesized expression")?;
+                Ok(inner)
             }
 
             Token::TypeName(n) | Token::PrimitiveTypeName(n) => {
-                let type_name = Name::new(self.to_location(next.span), n);
+                let type_name = Name::new(self.to_location(next.span.clone()), n);
                 let after_type_name = self.next()?.ok_or_else(|| {
                     self.bad_eof("looking for colon, open brace, or open paren in constructor")
                 })?;
@@ -1320,41 +1378,25 @@ impl<'lexer> Parser<'lexer> {
                             fields.push(field);
                         }
 
-                        let closer = self.next()?.ok_or_else(|| {
-                            self.bad_eof("looking for close brace in structure value")
-                        })?;
-                        if !matches!(closer.token, Token::CloseBrace) {
-                            return Err(ParserError::UnexpectedToken {
-                                file: self.file.clone(),
-                                span: closer.span,
-                                token: closer.token,
-                                expected: "close brace or comma after field value",
-                            });
-                        }
+                        let brace = self.require_token(Token::CloseBrace, "end of structure value")?;
 
-                        Ok(Expression::StructureValue(type_name, fields))
+                        let sv = StructureExpr {
+                            location: self.to_location(next.span).extend_to(&brace),
+                            type_name,
+                            fields,
+                        };
+
+                        Ok(Expression::Structure(sv))
                     }
 
-                    Token::Colon => {
-                        let second_colon = self.next()?.ok_or_else(|| {
-                            self.bad_eof("looking for second colon in enumeration value")
-                        })?;
-                        if !matches!(second_colon.token, Token::Colon) {
-                            return Err(ParserError::UnexpectedToken {
-                                file: self.file.clone(),
-                                span: second_colon.span,
-                                token: second_colon.token,
-                                expected: "second colon in enumeration value",
-                            });
-                        }
-
+                    Token::DoubleColon => {
                         let vname = self
                             .next()?
                             .ok_or_else(|| self.bad_eof("looking for enumeration value name"))?;
 
-                        let value_name = match vname.token {
+                        let variant_name = match vname.token {
                             Token::TypeName(s) => {
-                                let loc = self.to_location(vname.span);
+                                let loc = self.to_location(vname.span.clone());
                                 Name::new(loc, s)
                             }
 
@@ -1363,52 +1405,48 @@ impl<'lexer> Parser<'lexer> {
                                     file: self.file.clone(),
                                     span: vname.span,
                                     token: vname.token,
-                                    expected: "enumeration value name",
+                                    expected: "enumeration value name".into(),
                                 });
                             }
                         };
 
-                        let arg = if let Some(maybe_paren) = self.next()? {
+                        let (argument, end_loc) = if let Some(maybe_paren) = self.next()? {
                             if matches!(maybe_paren.token, Token::OpenParen) {
                                 let expr = self.parse_expression()?;
+                                let closer = self.require_token(Token::CloseParen, "after variant argument")?;
 
-                                let tok = self.next()?.ok_or_else(|| {
-                                    self.bad_eof("looking for close paren after enum value argument")
-                                })?;
-                                if !matches!(tok.token, Token::CloseParen) {
-                                    return Err(ParserError::UnexpectedToken {
-                                        file: self.file.clone(),
-                                        span: tok.span,
-                                        token: tok.token,
-                                        expected: "close paren after enum value argument",
-                                    });
-                                }
-
-                                Some(Box::new(expr))
+                                (Some(Box::new(expr)), closer)
                             } else {
                                 self.save(maybe_paren);
-                                None
+                                (None, self.to_location(vname.span))
                             }
                         } else {
-                            None
+                            (None, self.to_location(vname.span))
                         };
 
-                        Ok(Expression::EnumerationValue(type_name, value_name, arg))
+                        let ev = EnumerationExpr {
+                            location: self.to_location(next.span).extend_to(&end_loc),
+                            type_name,
+                            variant_name,
+                            argument,
+                        };
+
+                        Ok(Expression::Enumeration(ev))
                     }
 
                     _ => Err(ParserError::UnexpectedToken {
                         file: self.file.clone(),
                         span: after_type_name.span,
                         token: after_type_name.token,
-                        expected: "colon, open brace, or open paren in constructor",
+                        expected: "colon, open brace, or open paren in constructor".into(),
                     }),
                 }
             }
 
             Token::ValueName(n) | Token::PrimitiveValueName(n) => {
                 let location = self.to_location(next.span);
-                let name = Name::new(location, n);
-                Ok(Expression::Reference(name))
+                let name = Name::new(location.clone(), n);
+                Ok(Expression::Reference(location, name))
             }
 
             _ => {
@@ -1417,17 +1455,20 @@ impl<'lexer> Parser<'lexer> {
                     file: self.file.clone(),
                     span: next.span,
                     token: next.token,
-                    expected: "some base expression or an open brace",
+                    expected: "some base expression or an open brace".into(),
                 })
             }
         }
     }
 
+    /// Parse a type from the input stream.
+    ///
+    /// Obviously, there are a lot of ways for things to not be a valid
+    /// function type. As it can, this will try to leave things in the
+    /// original state on an error, but that won't always be possible. So
+    /// it's probably best to only try to call this when you're sure there
+    /// should be a type sitting there.
     pub fn parse_type(&mut self) -> Result<Type, ParserError> {
-        self.parse_function_type()
-    }
-
-    fn parse_function_type(&mut self) -> Result<Type, ParserError> {
         let mut args = Vec::new();
 
         while let Ok(t) = self.parse_type_application() {
@@ -1439,23 +1480,23 @@ impl<'lexer> Parser<'lexer> {
                 None => {
                     return Err(ParserError::UnacceptableEof {
                         file: self.file.clone(),
-                        place: "parsing function type or type",
+                        place: "parsing function type or type".into(),
                     });
                 }
 
-                Some(t) if args.len() == 0 => return Ok(t),
+                Some(t) if args.is_empty() => return Ok(t),
 
                 Some(_) => {
                     return Err(ParserError::UnacceptableEof {
                         file: self.file.clone(),
-                        place: "looking for '->' in function type",
+                        place: "looking for '->' in function type".into(),
                     });
                 }
             }
         };
 
         if maybe_arrow.token == Token::Arrow {
-            let right = self.parse_function_type()?;
+            let right = self.parse_type()?;
             Ok(Type::Function(args, Box::new(right)))
         } else if args.len() == 1 {
             self.save(maybe_arrow);
@@ -1468,11 +1509,23 @@ impl<'lexer> Parser<'lexer> {
                 file: self.file.clone(),
                 span,
                 token,
-                expected: "'->' in function type",
+                expected: "'->' in function type".into(),
             })
         }
     }
 
+    /// Parse a type application.
+    ///
+    /// Type applications must start with a type name (a capitalized variable
+    /// name). If we don't find one, we immediately error out. However if we
+    /// do find one, we will then eat as many base types as we can until we
+    /// run into an error.
+    ///
+    /// If we don't find a type name immediately, we will return an error but
+    /// leave the parse stream unchanged. If we parse a bunch of base types
+    /// correctly, the stream will be left at the start of the first non-base-type
+    /// token. However, this function can leave things in a weird state if there
+    /// is an open parenthesis that tries to enclose something that's not a type.
     fn parse_type_application(&mut self) -> Result<Type, ParserError> {
         let LocatedToken { token, span } =
             self.next()?.ok_or_else(|| self.bad_eof("parsing type"))?;
@@ -1501,6 +1554,14 @@ impl<'lexer> Parser<'lexer> {
         Ok(Type::Application(Box::new(constructor), args))
     }
 
+    /// Parse a base type from the input stream.
+    ///
+    /// A "base type" is a type variable, a primitive type name, a type name,
+    /// or a parenthesized version of some other type. This function will return
+    /// an error if it can't find one of these things, and will *attempt* to
+    /// return the stream unmodified in the event of an error. However, if it
+    /// sees a parenthesis and tries to parse a nested, complex type, it may
+    /// not be possible to recover the state precisely.
     fn parse_base_type(&mut self) -> Result<Type, ParserError> {
         let LocatedToken { token, span } =
             self.next()?.ok_or_else(|| self.bad_eof("parsing type"))?;
@@ -1529,7 +1590,7 @@ impl<'lexer> Parser<'lexer> {
                         file: self.file.clone(),
                         span: closer.span,
                         token: closer.token,
-                        expected: "close parenthesis to finish a type",
+                        expected: "close parenthesis to finish a type".into(),
                     });
                 }
 
@@ -1545,13 +1606,17 @@ impl<'lexer> Parser<'lexer> {
                     file: self.file.clone(),
                     span,
                     token,
-                    expected: "type constructor, type variable, or primitive type",
+                    expected: "type constructor, type variable, or primitive type".into(),
                 })
             }
         }
     }
 
-    pub fn parse_constant(&mut self) -> Result<ConstantValue, ParserError> {
+    /// Try to parse a constant value from the input stream.
+    ///
+    /// If we don't find a name, the stream should be returned in the same state
+    /// at which it entered this function.
+    pub(crate) fn parse_constant(&mut self) -> Result<ConstantValue, ParserError> {
         let maybe_constant = self
             .next()?
             .ok_or_else(|| self.bad_eof("looking for a constant"))?;
@@ -1575,9 +1640,53 @@ impl<'lexer> Parser<'lexer> {
                     file: self.file.clone(),
                     span: maybe_constant.span,
                     token: maybe_constant.token,
-                    expected: "constant value",
+                    expected: "constant value".into(),
                 })
             }
+        }
+    }
+
+    /// Try to parse a name from the input stream.
+    ///
+    /// If we don't find a name, the stream should be returned in the same state
+    /// at which it entered this function.
+    fn parse_name(&mut self, place: &'static str) -> Result<Name, ParserError> {
+        let maybe_name = self
+            .next()?
+            .ok_or_else(|| self.bad_eof(format!("looking for a name in {place}")))?;
+
+        if let Token::ValueName(x) = maybe_name.token {
+            Ok(Name::new(self.to_location(maybe_name.span), x))
+        } else {
+            self.save(maybe_name.clone());
+            Err(ParserError::UnexpectedToken {
+                file: self.file.clone(),
+                span: maybe_name.span,
+                token: maybe_name.token,
+                expected: format!("looking for a name in {place}"),
+            })
+        }
+    }
+
+    /// Try to parse a type name from the input stream.
+    ///
+    /// If we don't find a name, the stream should be returned in the same state
+    /// at which it entered this function.
+    fn parse_type_name(&mut self, place: &'static str) -> Result<Name, ParserError> {
+        let maybe_name = self
+            .next()?
+            .ok_or_else(|| self.bad_eof(format!("looking for a type name in {place}")))?;
+
+        if let Token::TypeName(x) = maybe_name.token {
+            Ok(Name::new(self.to_location(maybe_name.span), x))
+        } else {
+            self.save(maybe_name.clone());
+            Err(ParserError::UnexpectedToken {
+                file: self.file.clone(),
+                span: maybe_name.span,
+                token: maybe_name.token,
+                expected: format!("looking for a type name in {place}"),
+            })
         }
     }
 }

@@ -61,4 +61,8 @@ impl Name {
     pub fn bind_to(&mut self, other: &Name) {
         self.identifier = other.identifier;
     }
+
+    pub fn location(&self) -> Option<&Location> {
+        self.location.as_ref()
+    }
 }

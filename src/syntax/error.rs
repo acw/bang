@@ -16,7 +16,7 @@ pub enum ParserError {
     #[error("Unacceptable end of file at {file} while {place}")]
     UnacceptableEof {
         file: ArcIntern<PathBuf>,
-        place: &'static str,
+        place: String,
     },
 
     #[error("Unexpected token at {file}: expected {expected}, saw {token}")]
@@ -24,7 +24,7 @@ pub enum ParserError {
         file: ArcIntern<PathBuf>,
         span: Range<usize>,
         token: Token,
-        expected: &'static str,
+        expected: String,
     },
 
     #[error("Unexpected problem opening file {file}: {error}")]

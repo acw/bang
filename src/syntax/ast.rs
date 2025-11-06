@@ -27,6 +27,7 @@ pub enum Def {
     Structure(StructureDef),
     Function(FunctionDef),
     Value(ValueDef),
+    Operator(OperatorDef),
 }
 
 impl Located for Def {
@@ -36,6 +37,7 @@ impl Located for Def {
             Def::Structure(def) => def.location.clone(),
             Def::Function(def) => def.location.clone(),
             Def::Value(def) => def.location.clone(),
+            Def::Operator(def) => def.location.clone(),
         }
     }
 }
@@ -92,6 +94,13 @@ pub struct ValueDef {
 }
 
 #[derive(Debug)]
+pub struct OperatorDef {
+    pub operator_name: Name,
+    pub function_name: Name,
+    location: Location,
+}
+
+#[derive(Debug)]
 pub enum ExportClass {
     Public,
     Private,
@@ -114,13 +123,43 @@ pub struct BindingStmt {
 #[derive(Debug)]
 pub enum Expression {
     Value(ConstantValue),
-    Reference(Name),
-    EnumerationValue(Name, Name, Option<Box<Expression>>),
-    StructureValue(Name, Vec<FieldValue>),
+    Reference(Location, Name),
+    Enumeration(EnumerationExpr),
+    Structure(StructureExpr),
     Conditional(ConditionalExpr),
     Match(MatchExpr),
     Call(Box<Expression>, CallKind, Vec<Expression>),
     Block(Location, Vec<Statement>),
+}
+
+impl Located for Expression {
+    fn location(&self) -> Location {
+        match self {
+            Expression::Value(c) => c.location(),
+            Expression::Reference(l, _) => l.clone(),
+            Expression::Enumeration(ev) => ev.location.clone(),
+            Expression::Structure(sv) => sv.location.clone(),
+            Expression::Conditional(ce) => ce.location.clone(),
+            Expression::Match(me) => me.location.clone(),
+            Expression::Call(_, _, _) => unimplemented!(),
+            Expression::Block(l, _) => l.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct EnumerationExpr {
+    pub location: Location,
+    pub type_name: Name,
+    pub variant_name: Name,
+    pub argument: Option<Box<Expression>>,
+}
+
+#[derive(Debug)]
+pub struct StructureExpr {
+    pub location: Location,
+    pub type_name: Name,
+    pub fields: Vec<FieldValue>,
 }
 
 #[derive(Debug)]
@@ -238,6 +277,16 @@ pub enum ConstantValue {
     Integer(Location, IntegerWithBase),
     Character(Location, char),
     String(Location, String),
+}
+
+impl Located for ConstantValue {
+    fn location(&self) -> Location {
+        match self {
+            ConstantValue::Integer(l, _) => l.clone(),
+            ConstantValue::Character(l, _) => l.clone(),
+            ConstantValue::String(l, _) => l.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Arbitrary)]

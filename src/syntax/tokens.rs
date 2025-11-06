@@ -27,6 +27,7 @@ pub enum Token {
     CloseBrace,
     Semi,
     Colon,
+    DoubleColon,
     Comma,
     BackTick,
     Arrow,
@@ -61,6 +62,7 @@ impl fmt::Display for Token {
             Token::CloseBrace => write!(f, "}}"),
             Token::Semi => write!(f, ";"),
             Token::Colon => write!(f, ":"),
+            Token::DoubleColon => write!(f, "::"),
             Token::Comma => write!(f, ","),
             Token::BackTick => write!(f, "`"),
             Token::Arrow => write!(f, "->"),
@@ -99,10 +101,7 @@ struct LexerState<'a> {
 
 impl<'a> From<&'a str> for Lexer<'a> {
     fn from(value: &'a str) -> Self {
-        Lexer::Working(LexerState {
-            stream: value.char_indices(),
-            buffer: None,
-        })
+        Lexer::new(value)
     }
 }
 
@@ -142,8 +141,7 @@ impl<'a> Iterator for Lexer<'a> {
 
 impl<'a> LexerState<'a> {
     fn next_char(&mut self) -> Option<(usize, char)> {
-        let result = self.buffer.take().or_else(|| self.stream.next());
-        result
+        self.buffer.take().or_else(|| self.stream.next())
     }
 
     fn stash_char(&mut self, idx: usize, c: char) {
@@ -172,7 +170,6 @@ impl<'a> LexerState<'a> {
                 '{' => return simple_response(Token::OpenBrace),
                 '}' => return simple_response(Token::CloseBrace),
                 ';' => return simple_response(Token::Semi),
-                ':' => return simple_response(Token::Colon),
                 ',' => return simple_response(Token::Comma),
                 '`' => return simple_response(Token::BackTick),
                 '\\' => return simple_response(Token::Lambda(false)),
@@ -182,6 +179,7 @@ impl<'a> LexerState<'a> {
                 '\'' => return self.starts_with_single(token_start_offset),
                 '\"' => return self.starts_with_double(token_start_offset),
                 '-' => return self.starts_with_dash(token_start_offset),
+                ':' => return self.starts_with_colon(token_start_offset),
                 _ => {}
             }
 
@@ -519,6 +517,31 @@ impl<'a> LexerState<'a> {
             }
         }
     }
+
+    fn starts_with_colon(
+        &mut self,
+        token_start_offset: usize,
+    ) -> Result<Option<LocatedToken>, LexerError> {
+        match self.next_char() {
+            None => Ok(Some(LocatedToken {
+                token: Token::Colon,
+                span: token_start_offset..token_start_offset + 1,
+            })),
+
+            Some((pos, ':')) => Ok(Some(LocatedToken {
+                token: Token::DoubleColon,
+                span: token_start_offset..pos,
+            })),
+
+            Some((pos, char)) => {
+                self.stash_char(pos, char);
+                Ok(Some(LocatedToken {
+                    token: Token::Colon,
+                    span: token_start_offset..token_start_offset + 1,
+                }))
+            }
+        }
+    }
 }
 
 proptest::proptest! {
@@ -542,7 +565,7 @@ fn parsed_single_token(s: &str) -> Token {
     let mut tokens = Lexer::from(s);
     let result = tokens
         .next()
-        .expect(format!("Can get at least one token from {s:?}").as_str())
+        .unwrap_or_else(|| panic!("Can get at least one token from {s:?}"))
         .expect("Can get a valid token.")
         .token;
 

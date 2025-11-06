@@ -6,21 +6,17 @@ use memmap2::Mmap;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+#[derive(Default)]
 pub struct Universe {
     pub files: HashMap<PathBuf, Mmap>,
     pub modules: HashMap<PathBuf, Module>,
 }
 
-impl Default for Universe {
-    fn default() -> Self {
-        Universe {
-            files: HashMap::new(),
-            modules: HashMap::new(),
-        }
-    }
-}
-
 impl Universe {
+    /// Add a file to this universe.
+    ///
+    /// This may result in other files being loaded on behalf of the file, if
+    /// (for example) the given file has imports.
     pub fn add_file<P: AsRef<Path>>(&mut self, file: P) -> Result<(), ParserError> {
         let filename = file.as_ref().to_string_lossy().into_owned();
 

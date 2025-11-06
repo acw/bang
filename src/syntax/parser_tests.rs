@@ -151,7 +151,7 @@ fn type_restrictions() {
              matches!(&arguments[0], Type::Variable(_, x) if x.as_printed() == "a") &&
              matches!(&arguments[1], Type::Variable(_, x) if x.as_printed() == "b"))));
 
-    assert!(matches!(parse_tr("restrict(,Cons a b,)"), Err(_)));
+    assert!(parse_tr("restrict(,Cons a b,)").is_err());
 
     assert!(matches!(
         parse_tr("restrict(Cons a b, Monad m)"),
@@ -196,7 +196,7 @@ fn field_definition() {
         result.parse_field_definition()
     };
 
-    assert!(matches!(parse_fd("foo"), Err(_),));
+    assert!(parse_fd("foo").is_err());
     assert!(matches!(
         parse_fd("foo,"),
         Ok(Some(StructureField{ name, export: ExportClass::Private, field_type: None, .. }))
@@ -250,10 +250,11 @@ fn structures() {
         result.parse_structure()
     };
 
-    assert!(matches!(parse_st("structure { }"), Err(_)));
-    assert!(matches!(parse_st("structure {"), Err(_)));
-    assert!(matches!(parse_st("structure foo {}"), Err(_)));
+    assert!(parse_st("structure { }").is_err());
+    assert!(parse_st("structure {").is_err());
+    assert!(parse_st("structure foo {}").is_err());
 
+    println!("result: {:?}", parse_st("structure Foo {}"));
     assert!(matches!(
         parse_st("structure Foo {}"),
         Ok(StructureDef { name, fields, .. })
@@ -264,7 +265,7 @@ fn structures() {
         Ok(StructureDef { name, fields, .. })
           if name.as_printed() == "Foo" &&
              matches!(fields.as_slice(), &[StructureField { ref name, ref field_type, .. }]
-                 if name.as_printed() == "bar" && matches!(field_type, None))));
+                 if name.as_printed() == "bar" && field_type.is_none())));
 
     assert!(matches!(
         parse_st("structure Foo { bar: Word8 }"),
@@ -326,10 +327,10 @@ fn enum_variant() {
         result.parse_enum_variant()
     };
 
-    assert!(matches!(parse_ev("foo"), Err(_),));
-    assert!(matches!(parse_ev("foo,"), Err(_),));
-    assert!(matches!(parse_ev("Cons foo,"), Err(_),));
-    assert!(matches!(parse_ev(""), Err(_)));
+    assert!(matches!(parse_ev("foo"), Ok(None)));
+    assert!(matches!(parse_ev("foo,"), Ok(None)));
+    assert!(parse_ev("Cons foo,").is_err());
+    assert!(matches!(parse_ev(""), Ok(None)));
 
     assert!(matches!(parse_ev("}"), Ok(None)));
 
@@ -383,9 +384,9 @@ fn enumerations() {
         result.parse_enumeration()
     };
 
-    assert!(matches!(parse_en("enumeration { }"), Err(_)));
-    assert!(matches!(parse_en("enumeration {"), Err(_)));
-    assert!(matches!(parse_en("enumeration"), Err(_)));
+    assert!(parse_en("enumeration { }").is_err());
+    assert!(parse_en("enumeration {").is_err());
+    assert!(parse_en("enumeration").is_err());
 
     assert!(matches!(
       parse_en("enumeration Empty { }"),
@@ -419,13 +420,13 @@ fn expressions() {
         result.parse_expression()
     };
 
-    assert!(matches!(parse_ex(""), Err(_)));
+    assert!(parse_ex("").is_err());
     assert!(matches!(
       parse_ex("x"),
-      Ok(Expression::Reference(n)) if n.as_printed() == "x"));
+      Ok(Expression::Reference(_,n)) if n.as_printed() == "x"));
     assert!(matches!(
       parse_ex("(x)"),
-      Ok(Expression::Reference(n)) if n.as_printed() == "x"));
+      Ok(Expression::Reference(_,n)) if n.as_printed() == "x"));
     assert!(matches!(
         parse_ex("'c'"),
         Ok(Expression::Value(ConstantValue::Character(_, _)))
@@ -452,17 +453,19 @@ fn enumeration_values() {
         result.parse_expression()
     };
 
-    assert!(matches!(parse_ex("Hello::world"), Err(_)));
+    assert!(parse_ex("Hello::world").is_err());
     assert!(matches!(
       parse_ex("Hello::World"),
-      Ok(Expression::EnumerationValue(t, v, None))
-        if t.as_printed() == "Hello" &&
-           v.as_printed() == "World"));
+      Ok(Expression::Enumeration(ev))
+        if ev.type_name.as_printed() == "Hello" &&
+           ev.variant_name.as_printed() == "World" &&
+           ev.argument.is_none()));
     assert!(matches!(
       parse_ex("Hello::World(a)"),
-      Ok(Expression::EnumerationValue(t, v, Some(_)))
-        if t.as_printed() == "Hello" &&
-           v.as_printed() == "World"));
+      Ok(Expression::Enumeration(ev))
+        if ev.type_name.as_printed() == "Hello" &&
+           ev.variant_name.as_printed() == "World" &&
+           ev.argument.is_some()));
 }
 
 #[test]
@@ -473,29 +476,30 @@ fn structure_value() {
         result.parse_expression()
     };
 
-    assert!(matches!(parse_st("Foo{ , }"), Err(_)));
-    assert!(matches!(parse_st("Foo{ foo, }"), Err(_)));
-    assert!(matches!(parse_st("Foo{ foo: , }"), Err(_)));
-    assert!(matches!(parse_st("Foo{ , foo: 1, }"), Err(_)));
+    assert!(parse_st("Foo{ , }").is_err());
+    assert!(parse_st("Foo{ foo, }").is_err());
+    assert!(parse_st("Foo{ foo: , }").is_err());
+    assert!(parse_st("Foo{ , foo: 1, }").is_err());
+    println!("result: {:?}", parse_st("Foo{ foo: 1 }"));
     assert!(matches!(
       parse_st("Foo{ foo: 1 }"),
-      Ok(Expression::StructureValue(sname, values))
-        if sname.as_printed() == "Foo" &&
-           matches!(values.as_slice(), [FieldValue{ field, value }]
+      Ok(Expression::Structure(sv))
+        if sv.type_name.as_printed() == "Foo" &&
+           matches!(sv.fields.as_slice(), [FieldValue{ field, value }]
              if field.as_printed() == "foo" &&
                 matches!(value, Expression::Value(ConstantValue::Integer(_,_))))));
     assert!(matches!(
       parse_st("Foo{ foo: 1, }"),
-      Ok(Expression::StructureValue(sname, values))
-        if sname.as_printed() == "Foo" &&
-           matches!(values.as_slice(), [FieldValue{ field, value }]
+      Ok(Expression::Structure(sv))
+        if sv.type_name.as_printed() == "Foo" &&
+           matches!(sv.fields.as_slice(), [FieldValue{ field, value }]
              if field.as_printed() == "foo" &&
                 matches!(value, Expression::Value(ConstantValue::Integer(_,_))))));
     assert!(matches!(
       parse_st("Foo{ foo: 1, bar: \"foo\" }"),
-      Ok(Expression::StructureValue(sname, values))
-        if sname.as_printed() == "Foo" &&
-           matches!(values.as_slice(), [FieldValue{ field: f1, value: v1 },
+      Ok(Expression::Structure(sv))
+        if sv.type_name.as_printed() == "Foo" &&
+           matches!(sv.fields.as_slice(), [FieldValue{ field: f1, value: v1 },
                                         FieldValue{ field: f2, value: v2 }]
              if f1.as_printed() == "foo" &&
                 f2.as_printed() == "bar" &&
@@ -503,15 +507,15 @@ fn structure_value() {
                 matches!(v2, Expression::Value(ConstantValue::String(_,_))))));
     assert!(matches!(
       parse_st("Foo{ foo: 1, bar: \"foo\", }"),
-      Ok(Expression::StructureValue(sname, values))
-        if sname.as_printed() == "Foo" &&
-           matches!(values.as_slice(), [FieldValue{ field: f1, value: v1 },
+      Ok(Expression::Structure(sv))
+        if sv.type_name.as_printed() == "Foo" &&
+           matches!(sv.fields.as_slice(), [FieldValue{ field: f1, value: v1 },
                                         FieldValue{ field: f2, value: v2 }]
              if f1.as_printed() == "foo" &&
                 f2.as_printed() == "bar" &&
                 matches!(v1, Expression::Value(ConstantValue::Integer(_,_))) &&
                 matches!(v2, Expression::Value(ConstantValue::String(_,_))))));
-    assert!(matches!(parse_st("Foo{ foo: 1,, bar: \"foo\", }"), Err(_)));
+    assert!(parse_st("Foo{ foo: 1,, bar: \"foo\", }").is_err());
 }
 
 #[test]
@@ -539,7 +543,7 @@ fn infix_and_precedence() {
     assert!(matches!(
       parse_ex("1 + 2"),
       Ok(Expression::Call(plus, CallKind::Infix, args))
-        if matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+        if matches!(plus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
            matches!(args.as_slice(), [
              Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v1, .. })),
              Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v2, .. }))
@@ -547,12 +551,12 @@ fn infix_and_precedence() {
     assert!(matches!(
       parse_ex("1 + 2 + 3"),
       Ok(Expression::Call(plus, CallKind::Infix, args))
-        if matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+        if matches!(plus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
            matches!(args.as_slice(), [
              Expression::Call(innerplus, CallKind::Infix, inner_args),
              Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v3, .. }))
            ] if *v3 == 3 &&
-             matches!(innerplus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+             matches!(innerplus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
              matches!(inner_args.as_slice(), [
                Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v1, .. })),
                Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v2, .. }))
@@ -560,12 +564,12 @@ fn infix_and_precedence() {
     assert!(matches!(
       parse_ex("1 * 2 * 3"),
       Ok(Expression::Call(times, CallKind::Infix, args))
-        if matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+        if matches!(times.as_ref(), Expression::Reference(_,n) if n.as_printed() == "*") &&
            matches!(args.as_slice(), [
              Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v1, .. })),
              Expression::Call(innertimes, CallKind::Infix, inner_args),
            ] if *v1 == 1 &&
-             matches!(innertimes.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+             matches!(innertimes.as_ref(), Expression::Reference(_,n) if n.as_printed() == "*") &&
              matches!(inner_args.as_slice(), [
                Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v2, .. })),
                Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v3, .. }))
@@ -574,19 +578,19 @@ fn infix_and_precedence() {
     assert!(matches!(
       parse_ex("1 + 2 * 3 + 4"),
       Ok(Expression::Call(plus_right, CallKind::Infix, outer_args)) if
-        matches!(plus_right.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+        matches!(plus_right.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
         matches!(outer_args.as_slice(), [
           Expression::Call(plus_left, CallKind::Infix, left_args),
           Expression::Value(ConstantValue::Integer(_, v4))
         ] if
            matches!(v4, IntegerWithBase{ value: 4, .. }) &&
-           matches!(plus_left.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+           matches!(plus_left.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
            matches!(left_args.as_slice(), [
              Expression::Value(ConstantValue::Integer(_, v1)),
              Expression::Call(times, CallKind::Infix, times_args)
            ] if
               matches!(v1, IntegerWithBase{ value: 1, .. }) &&
-              matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+              matches!(times.as_ref(), Expression::Reference(_,n) if n.as_printed() == "*") &&
               matches!(times_args.as_slice(), [
                 Expression::Value(ConstantValue::Integer(_, v2)),
                 Expression::Value(ConstantValue::Integer(_, v3))
@@ -597,13 +601,13 @@ fn infix_and_precedence() {
     assert!(matches!(
       parse_ex("1 * 2 + 3 * 4"),
       Ok(Expression::Call(plus, CallKind::Infix, outer_args)) if
-        matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+        matches!(plus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
         matches!(outer_args.as_slice(), [
           Expression::Call(left_times, CallKind::Infix, left_args),
           Expression::Call(right_times, CallKind::Infix, right_args)
         ] if
-           matches!(left_times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
-           matches!(right_times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+           matches!(left_times.as_ref(), Expression::Reference(_,n) if n.as_printed() == "*") &&
+           matches!(right_times.as_ref(), Expression::Reference(_,n) if n.as_printed() == "*") &&
            matches!(left_args.as_slice(), [
              Expression::Value(ConstantValue::Integer(_, v1)),
              Expression::Value(ConstantValue::Integer(_, v2)),
@@ -631,95 +635,95 @@ fn calls() {
     assert!(matches!(
       parse_ex("f()"),
       Ok(Expression::Call(f, CallKind::Normal, args)) if
-        matches!(f.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+        matches!(f.as_ref(), Expression::Reference(_,n) if n.as_printed() == "f") &&
         args.is_empty()));
     assert!(matches!(
       parse_ex("f(a)"),
       Ok(Expression::Call(f, CallKind::Normal, args)) if
-        matches!(f.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
-        matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a")));
+        matches!(f.as_ref(), Expression::Reference(_,n) if n.as_printed() == "f") &&
+        matches!(args.as_slice(), [Expression::Reference(_,n)] if n.as_printed() == "a")));
     assert!(matches!(
       parse_ex("f(a,b)"),
       Ok(Expression::Call(f, CallKind::Normal, args)) if
-        matches!(f.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+        matches!(f.as_ref(), Expression::Reference(_,n) if n.as_printed() == "f") &&
         matches!(args.as_slice(), [
-          Expression::Reference(a),
-          Expression::Reference(b),
+          Expression::Reference(_,a),
+          Expression::Reference(_,b),
         ] if a.as_printed() == "a" && b.as_printed() == "b")));
     assert!(matches!(
       parse_ex("f(a,b,)"),
       Ok(Expression::Call(f, CallKind::Normal, args)) if
-        matches!(f.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+        matches!(f.as_ref(), Expression::Reference(_,n) if n.as_printed() == "f") &&
         matches!(args.as_slice(), [
-          Expression::Reference(a),
-          Expression::Reference(b),
+          Expression::Reference(_,a),
+          Expression::Reference(_,b),
         ] if a.as_printed() == "a" && b.as_printed() == "b")));
-    assert!(matches!(parse_ex("f(,a,b,)"), Err(_)));
-    assert!(matches!(parse_ex("f(a,,b,)"), Err(_)));
-    assert!(matches!(parse_ex("f(a,b,,)"), Err(_)));
+    assert!(parse_ex("f(,a,b,)").is_err());
+    assert!(parse_ex("f(a,,b,)").is_err());
+    assert!(parse_ex("f(a,b,,)").is_err());
 
     assert!(matches!(
       parse_ex("f()()"),
       Ok(Expression::Call(f, CallKind::Normal, args)) if
         matches!(f.as_ref(), Expression::Call(inner, CallKind::Normal, inner_args) if
-         matches!(inner.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+         matches!(inner.as_ref(), Expression::Reference(_,n) if n.as_printed() == "f") &&
          inner_args.is_empty()) &&
         args.is_empty()));
 
     assert!(matches!(
       parse_ex("f() + 1"),
       Ok(Expression::Call(plus, CallKind::Infix, args)) if
-       matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+       matches!(plus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
        matches!(args.as_slice(), [
         Expression::Call(subcall, CallKind::Normal, subargs),
         Expression::Value(ConstantValue::Integer(_, v1))
        ] if
         matches!(v1, IntegerWithBase{ value: 1, .. }) &&
-        matches!(subcall.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+        matches!(subcall.as_ref(), Expression::Reference(_,n) if n.as_printed() == "f") &&
         subargs.is_empty())));
 
     assert!(matches!(
       parse_ex("f(a + b, c*d)"),
       Ok(Expression::Call(eff, CallKind::Normal, args)) if
-       matches!(eff.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+       matches!(eff.as_ref(), Expression::Reference(_,n) if n.as_printed() == "f") &&
        matches!(args.as_slice(), [
         Expression::Call(plus, CallKind::Infix, pargs),
         Expression::Call(times, CallKind::Infix, targs),
        ] if
-        matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
-        matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
-        matches!(pargs.as_slice(), [ Expression::Reference(a), Expression::Reference(b) ] if
+        matches!(plus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
+        matches!(times.as_ref(), Expression::Reference(_,n) if n.as_printed() == "*") &&
+        matches!(pargs.as_slice(), [ Expression::Reference(_,a), Expression::Reference(_,b) ] if
          a.as_printed() == "a" && b.as_printed() == "b") &&
-        matches!(targs.as_slice(), [ Expression::Reference(c), Expression::Reference(d) ] if
+        matches!(targs.as_slice(), [ Expression::Reference(_,c), Expression::Reference(_,d) ] if
          c.as_printed() == "c" && d.as_printed() == "d"))));
 
     assert!(matches!(
       parse_ex("f(a + b, c*d,)"),
       Ok(Expression::Call(eff, CallKind::Normal, args)) if
-       matches!(eff.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+       matches!(eff.as_ref(), Expression::Reference(_,n) if n.as_printed() == "f") &&
        matches!(args.as_slice(), [
         Expression::Call(plus, CallKind::Infix, pargs),
         Expression::Call(times, CallKind::Infix, targs),
        ] if
-        matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
-        matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
-        matches!(pargs.as_slice(), [ Expression::Reference(a), Expression::Reference(b) ] if
+        matches!(plus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
+        matches!(times.as_ref(), Expression::Reference(_,n) if n.as_printed() == "*") &&
+        matches!(pargs.as_slice(), [ Expression::Reference(_,a), Expression::Reference(_,b) ] if
          a.as_printed() == "a" && b.as_printed() == "b") &&
-        matches!(targs.as_slice(), [ Expression::Reference(c), Expression::Reference(d) ] if
+        matches!(targs.as_slice(), [ Expression::Reference(_,c), Expression::Reference(_,d) ] if
          c.as_printed() == "c" && d.as_printed() == "d"))));
 
     assert!(matches!(
       parse_ex("3 + f(1 + 2)"),
       Ok(Expression::Call(plus, CallKind::Infix, args)) if
-       matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+       matches!(plus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
        matches!(args.as_slice(), [
          Expression::Value(ConstantValue::Integer(_, v3)),
          Expression::Call(eff, CallKind::Normal, fargs)
        ] if
         matches!(v3, IntegerWithBase{ value: 3, .. }) &&
-        matches!(eff.as_ref(), Expression::Reference(n) if n.as_printed() == "f") &&
+        matches!(eff.as_ref(), Expression::Reference(_,n) if n.as_printed() == "f") &&
         matches!(fargs.as_slice(), [Expression::Call(p, CallKind::Infix, pargs)] if
-         matches!(p.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+         matches!(p.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
          matches!(pargs.as_slice(), [Expression::Value(v1), Expression::Value(v2)] if
           matches!(v1, ConstantValue::Integer(_, IntegerWithBase { value: 1, .. })) &&
           matches!(v2, ConstantValue::Integer(_, IntegerWithBase { value: 2, .. })))))));
@@ -728,11 +732,11 @@ fn calls() {
       parse_ex("(f . g)(1 + 2)"),
       Ok(Expression::Call(fg, CallKind::Normal, args)) if
        matches!(fg.as_ref(), Expression::Call(dot, CallKind::Infix, fgargs) if
-         matches!(dot.as_ref(), Expression::Reference(n) if n.as_printed() == ".") &&
-         matches!(fgargs.as_slice(), [Expression::Reference(f), Expression::Reference(g)] if
+         matches!(dot.as_ref(), Expression::Reference(_,n) if n.as_printed() == ".") &&
+         matches!(fgargs.as_slice(), [Expression::Reference(_,f), Expression::Reference(_,g)] if
           f.as_printed() == "f" && g.as_printed() == "g")) &&
        matches!(args.as_slice(), [Expression::Call(plus, CallKind::Infix, pargs)] if
-         matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+         matches!(plus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
          matches!(pargs.as_slice(), [Expression::Value(v1), Expression::Value(v2)] if
            matches!(v1, ConstantValue::Integer(_, IntegerWithBase{ value: 1, .. })) &&
            matches!(v2, ConstantValue::Integer(_, IntegerWithBase{ value: 2, .. }))))));
@@ -740,19 +744,19 @@ fn calls() {
     assert!(matches!(
     parse_ex("a + b(2 + 3) * c"),
     Ok(Expression::Call(plus, CallKind::Infix, pargs)) if
-     matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+     matches!(plus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
      matches!(pargs.as_slice(), [
-      Expression::Reference(a),
+      Expression::Reference(_,a),
       Expression::Call(times, CallKind::Infix, targs)
     ] if a.as_printed() == "a" &&
-     matches!(times.as_ref(), Expression::Reference(n) if n.as_printed() == "*") &&
+     matches!(times.as_ref(), Expression::Reference(_,n) if n.as_printed() == "*") &&
      matches!(targs.as_slice(), [
        Expression::Call(b, CallKind::Normal, bargs),
-       Expression::Reference(c),
+       Expression::Reference(_,c),
      ] if c.as_printed() == "c" &&
-      matches!(b.as_ref(), Expression::Reference(n) if n.as_printed() == "b") &&
+      matches!(b.as_ref(), Expression::Reference(_,n) if n.as_printed() == "b") &&
       matches!(bargs.as_slice(), [Expression::Call(plus, CallKind::Infix, pargs)] if
-       matches!(plus.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+       matches!(plus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
        matches!(pargs.as_slice(), [
          Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: 2, .. })),
          Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: 3, .. }))
@@ -776,56 +780,56 @@ fn prefix_and_postfix() {
     assert!(matches!(
      parse_ex("++a"),
      Ok(Expression::Call(pp, CallKind::Prefix, args)) if
-      matches!(pp.as_ref(), Expression::Reference(n) if n.as_printed() == "++") &&
-      matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a")));
+      matches!(pp.as_ref(), Expression::Reference(_,n) if n.as_printed() == "++") &&
+      matches!(args.as_slice(), [Expression::Reference(_,n)] if n.as_printed() == "a")));
 
     assert!(matches!(
      parse_ex("a--"),
      Ok(Expression::Call(pp, CallKind::Postfix, args)) if
-      matches!(pp.as_ref(), Expression::Reference(n) if n.as_printed() == "--") &&
-      matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a")));
+      matches!(pp.as_ref(), Expression::Reference(_,n) if n.as_printed() == "--") &&
+      matches!(args.as_slice(), [Expression::Reference(_,n)] if n.as_printed() == "a")));
 
     // the prefix is weaker than the postfix, so it should be the outside
     // operatotr
     assert!(matches!(
      parse_ex("++a--"),
      Ok(Expression::Call(pp, CallKind::Prefix, args)) if
-      matches!(pp.as_ref(), Expression::Reference(n) if n.as_printed() == "++") &&
+      matches!(pp.as_ref(), Expression::Reference(_,n) if n.as_printed() == "++") &&
       matches!(args.as_slice(), [Expression::Call(mm, CallKind::Postfix, args)] if
-        matches!(mm.as_ref(), Expression::Reference(n) if n.as_printed() == "--") &&
-        matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a"))));
+        matches!(mm.as_ref(), Expression::Reference(_,n) if n.as_printed() == "--") &&
+        matches!(args.as_slice(), [Expression::Reference(_,n)] if n.as_printed() == "a"))));
 
     // the prefix is stronger than the postfix, so it should be the inside
     // operator
     assert!(matches!(
      parse_ex("--a++"),
      Ok(Expression::Call(pp, CallKind::Postfix, args)) if
-      matches!(pp.as_ref(), Expression::Reference(n) if n.as_printed() == "++") &&
+      matches!(pp.as_ref(), Expression::Reference(_,n) if n.as_printed() == "++") &&
       matches!(args.as_slice(), [Expression::Call(mm, CallKind::Prefix, args)] if
-        matches!(mm.as_ref(), Expression::Reference(n) if n.as_printed() == "--") &&
-        matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a"))));
+        matches!(mm.as_ref(), Expression::Reference(_,n) if n.as_printed() == "--") &&
+        matches!(args.as_slice(), [Expression::Reference(_,n)] if n.as_printed() == "a"))));
 
     assert!(matches!(
      parse_ex("a++ + b"),
      Ok(Expression::Call(p, CallKind::Infix, args)) if
-      matches!(p.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+      matches!(p.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
       matches!(args.as_slice(), [
         Expression::Call(mm, CallKind::Postfix, args),
-        Expression::Reference(n)
+        Expression::Reference(_,n)
       ] if n.as_printed() == "b" &&
-        matches!(mm.as_ref(), Expression::Reference(n) if n.as_printed() == "++") &&
-        matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "a"))));
+        matches!(mm.as_ref(), Expression::Reference(_,n) if n.as_printed() == "++") &&
+        matches!(args.as_slice(), [Expression::Reference(_,n)] if n.as_printed() == "a"))));
 
     assert!(matches!(
      parse_ex("a + ++ b"),
      Ok(Expression::Call(p, CallKind::Infix, args)) if
-      matches!(p.as_ref(), Expression::Reference(n) if n.as_printed() == "+") &&
+      matches!(p.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
       matches!(args.as_slice(), [
-        Expression::Reference(n),
+        Expression::Reference(_,n),
         Expression::Call(mm, CallKind::Prefix, args),
       ] if n.as_printed() == "a" &&
-        matches!(mm.as_ref(), Expression::Reference(n) if n.as_printed() == "++") &&
-        matches!(args.as_slice(), [Expression::Reference(n)] if n.as_printed() == "b"))));
+        matches!(mm.as_ref(), Expression::Reference(_,n) if n.as_printed() == "++") &&
+        matches!(args.as_slice(), [Expression::Reference(_,n)] if n.as_printed() == "b"))));
 
     assert!(matches!(
      parse_ex("a * ++ b"),
@@ -846,29 +850,29 @@ fn blocks() {
      Ok(Expression::Block(_, void)) if
       matches!(void.as_slice(), [Statement::Expression(call)] if
        matches!(call, Expression::Call(void, CallKind::Normal, vargs) if
-        matches!(void.as_ref(), Expression::Reference(n) if
+        matches!(void.as_ref(), Expression::Reference(_,n) if
           n.as_printed() == "%prim%void") &&
         vargs.is_empty()))));
     assert!(matches!(
      parse_ex("{ x }"),
      Ok(Expression::Block(_, x)) if
-      matches!(x.as_slice(), [Statement::Expression(Expression::Reference(n))] if
+      matches!(x.as_slice(), [Statement::Expression(Expression::Reference(_,n))] if
        n.as_printed() == "x")));
     assert!(matches!(
      parse_ex("{ x; }"),
      Ok(Expression::Block(_, x)) if
       matches!(x.as_slice(), [
-        Statement::Expression(Expression::Reference(n)),
+        Statement::Expression(Expression::Reference(_,n)),
         Statement::Expression(Expression::Call(primv, CallKind::Normal, vargs)),
       ] if n.as_printed() == "x" && vargs.is_empty() &&
-       matches!(primv.as_ref(), Expression::Reference(n) if
+       matches!(primv.as_ref(), Expression::Reference(_,n) if
         n.as_printed() == "%prim%void"))));
     assert!(matches!(
      parse_ex("{ x; y }"),
      Ok(Expression::Block(_, x)) if
       matches!(x.as_slice(), [
-        Statement::Expression(Expression::Reference(x)),
-        Statement::Expression(Expression::Reference(y)),
+        Statement::Expression(Expression::Reference(_,x)),
+        Statement::Expression(Expression::Reference(_,y)),
       ] if x.as_printed() == "x" && y.as_printed() == "y")));
 }
 
@@ -886,7 +890,7 @@ fn bindings() {
       matches!(x.as_slice(), [Statement::Binding(b), Statement::Expression(_)] if
        !b.mutable &&
        b.variable.as_printed() == "x" &&
-       matches!(b.value, Expression::Reference(ref n) if n.as_printed() == "y"))));
+       matches!(b.value, Expression::Reference(_,ref n) if n.as_printed() == "y"))));
 }
 
 #[test]
@@ -900,25 +904,25 @@ fn conditionals() {
     assert!(matches!(
      parse_ex("if x { y } else { z }"),
      Ok(Expression::Conditional(cond)) if
-      matches!(cond.test.as_ref(), Expression::Reference(n) if n.as_printed() == "x") &&
+      matches!(cond.test.as_ref(), Expression::Reference(_,n) if n.as_printed() == "x") &&
       matches!(cond.consequent.as_ref(), Expression::Block(_, cs) if
-       matches!(cs.as_slice(), [Statement::Expression(Expression::Reference(n))] if
+       matches!(cs.as_slice(), [Statement::Expression(Expression::Reference(_,n))] if
         n.as_printed() == "y")) &&
       matches!(cond.alternative.as_ref(), Some(expr) if
        matches!(expr.as_ref(), Expression::Block(_, ast) if
-        matches!(ast.as_slice(), [Statement::Expression(Expression::Reference(n))] if
+        matches!(ast.as_slice(), [Statement::Expression(Expression::Reference(_,n))] if
          n.as_printed() == "z")))));
 
     assert!(matches!(
      parse_ex("if x { y }"),
      Ok(Expression::Conditional(cond)) if
-      matches!(cond.test.as_ref(), Expression::Reference(n) if n.as_printed() == "x") &&
+      matches!(cond.test.as_ref(), Expression::Reference(_,n) if n.as_printed() == "x") &&
       matches!(cond.consequent.as_ref(), Expression::Block(_, cs) if
-       matches!(cs.as_slice(), [Statement::Expression(Expression::Reference(n))] if
+       matches!(cs.as_slice(), [Statement::Expression(Expression::Reference(_,n))] if
         n.as_printed() == "y")) &&
        cond.alternative.is_none()));
 
-    assert!(matches!(parse_ex("if x v { z }"), Err(_)));
+    assert!(parse_ex("if x v { z }").is_err());
 
     assert!(matches!(
      parse_ex("if x + y { z }"),
