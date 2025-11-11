@@ -90,14 +90,15 @@ pub struct FunctionArg {
 pub struct ValueDef {
     pub name: Name,
     pub location: Location,
+    pub mtype: Option<Type>,
     pub value: Expression,
 }
 
 #[derive(Debug)]
 pub struct OperatorDef {
     pub operator_name: Name,
+    pub location: Location,
     pub function_name: Name,
-    location: Location,
 }
 
 #[derive(Debug)]

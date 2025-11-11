@@ -36,6 +36,14 @@ pub enum Associativity {
     None,
 }
 
+/// The kind of operators we use. This is only narrowly useful inside
+/// this particular crate.
+enum OperatorType {
+    Prefix,
+    Infix,
+    Postfix,
+}
+
 impl<'lexer> Parser<'lexer> {
     /// Create a new parser from the given file index and lexer.
     ///
@@ -614,12 +622,86 @@ impl<'lexer> Parser<'lexer> {
     /// to; that variable can be declared further on in the file or even in another module,
     /// as we won't try to resolve it until later.
     ///
-    /// Like most definitions, we'll abort cleanly if the first token isn't the "operator"
-    /// keyword, but all bets are off after that.
+    /// Like most definitions, we'll abort cleanly if the first token isn't "operator",
+    /// "infix", "postfix", or "prefix" keywords, but all bets are off after that.
     pub fn parse_operator(&mut self) -> Result<OperatorDef, ParserError> {
-        let _operator = self.require_keyword("operator")?;
+        let (start, operator_type, associativity) = {
+            let mut optype = OperatorType::Infix;
+            let mut start = None;
+            let mut assoc = Associativity::None;
 
-        unimplemented!()
+            if let Ok(loc) = self.require_keyword("prefix") {
+                optype = OperatorType::Prefix;
+                start = Some(loc);
+            } else if let Ok(loc) = self.require_keyword("postfix") {
+                optype = OperatorType::Postfix;
+                start = Some(loc);
+            } else if let Ok(loc) = self.require_keyword("infix") {
+                start = Some(loc);
+
+                if self.require_keyword("right").is_ok() {
+                    assoc = Associativity::Right;
+                } else if self.require_keyword("left").is_ok() {
+                    assoc = Associativity::Left;
+                }
+            }
+
+            let oploc = self.require_keyword("operator")?;
+            (start.unwrap_or(oploc), optype, assoc)
+        };
+        let operator_name = self.parse_operator_name("operator definition")?;
+
+        let level = if self.require_keyword("at").is_ok() {
+            let next = self
+                .next()?
+                .ok_or_else(|| self.bad_eof("precedence value in operator definition"))?;
+
+            match next.token {
+                Token::Integer(int_with_base) if int_with_base.value < 10 => {
+                    int_with_base.value as u8
+                }
+
+                Token::Integer(ref int_with_base) => {
+                    return Err(ParserError::UnexpectedToken {
+                        file: self.file.clone(),
+                        span: next.span,
+                        token: next.token.clone(),
+                        expected: format!(
+                            "number defining operator precedence ({} is too large",
+                            int_with_base.value
+                        ),
+                    });
+                }
+
+                _ => {
+                    return Err(ParserError::UnexpectedToken {
+                        file: self.file.clone(),
+                        span: next.span,
+                        token: next.token,
+                        expected: "number defining operator precedence".into(),
+                    });
+                }
+            }
+        } else {
+            5
+        };
+
+        let function_name = self.parse_name("operator function definition")?;
+        let end = self.require_token(Token::Semi, "end of operator definition")?;
+
+        match operator_type {
+            OperatorType::Infix => {
+                self.add_infix_precedence(operator_name.as_printed(), associativity, level)
+            }
+            OperatorType::Prefix => self.add_prefix_precedence(operator_name.as_printed(), level),
+            OperatorType::Postfix => self.add_postfix_precedence(operator_name.as_printed(), level),
+        }
+
+        Ok(OperatorDef {
+            location: start.extend_to(&end),
+            operator_name,
+            function_name,
+        })
     }
 
     /// Parse a function or a value.
@@ -648,33 +730,63 @@ impl<'lexer> Parser<'lexer> {
             //
             // Or any of many variations of that.
             Token::OpenParen => {
-                unimplemented!()
+                self.save(next);
+                let arguments = self.parse_function_def_arguments()?;
+                let mut return_type = None;
+
+                if self.require_token(Token::Colon, "return type").is_ok() {
+                    return_type = Some(self.parse_type()?);
+                }
+
+                let Expression::Block(end, body) = self.parse_block()? else {
+                    panic!("parse_block returned something that wasn't a block.");
+                };
+
+                Ok(Def::Function(FunctionDef {
+                    name,
+                    location: start.extend_to(&end),
+                    arguments,
+                    return_type,
+                    body,
+                }))
             }
 
             // If we see a colon, then someone's giving us a type for what is probably
             // some form of simple constant, such as:
             //
-            // foo : Int = 4
+            // foo : Int = 4;
             //
             // But honestly, there's a lot of odd possibilities of complicated things
             // they could write there.
             Token::Colon => {
-                unimplemented!()
+                let value_type = self.parse_type()?;
+                let _ = self.require_operator("=")?;
+                let value = self.parse_expression()?;
+                let end = self.require_token(Token::Semi, "at end of definition")?;
+
+                Ok(Def::Value(ValueDef {
+                    name,
+                    location: start.extend_to(&end),
+                    mtype: Some(value_type),
+                    value,
+                }))
             }
 
             // If we see an equal sign, we're jumping right to the value part of the
             // definition, and we're doing something like this:
             //
-            // foo = 4
+            // foo = 4;
             //
             // Again, though, you could write all sorts of interesting things after
             // that.
             Token::OperatorName(eq) if eq == "=" => {
                 let value = self.parse_expression()?;
+                let end = self.require_token(Token::Semi, "at end of definition")?;
 
                 Ok(Def::Value(ValueDef {
                     name,
-                    location: start.extend_to(&value.location()),
+                    location: start.extend_to(&end),
+                    mtype: None,
                     value,
                 }))
             }
@@ -688,6 +800,38 @@ impl<'lexer> Parser<'lexer> {
                 expected: "open parenthesis, colon, or equals after variable in definition".into(),
             }),
         }
+    }
+
+    /// Parse the arguments to a function declaration.
+    ///
+    /// Function arguments should have types, but don't have to. This function assumes
+    /// that it's starting at the opening parenthesis, and will error (cleanly) if it
+    /// isn't.
+    fn parse_function_def_arguments(&mut self) -> Result<Vec<FunctionArg>, ParserError> {
+        let _ = self.require_token(Token::OpenParen, "start of function argument definition")?;
+        let mut result = vec![];
+
+        loop {
+            let next = self
+                .next()?
+                .ok_or_else(|| self.bad_eof("parsing function arguments"))?;
+
+            if matches!(next.token, Token::CloseParen) {
+                break;
+            }
+
+            self.save(next);
+            let name = self.parse_name("function argument name")?;
+            let mut arg_type = None;
+
+            if self.require_token(Token::Colon, "").is_ok() {
+                arg_type = Some(self.parse_type()?);
+            }
+
+            result.push(FunctionArg { name, arg_type });
+        }
+
+        Ok(result)
     }
 
     /// Parse a single expression out of the input stream.
@@ -1577,6 +1721,28 @@ impl<'lexer> Parser<'lexer> {
                 span: maybe_name.span,
                 token: maybe_name.token,
                 expected: format!("looking for a type name in {place}"),
+            })
+        }
+    }
+
+    /// Try to parse an operator from the input stream.
+    ///
+    /// If we don't find a name, the stream should be returned in the same state
+    /// at which it entered this function.
+    fn parse_operator_name(&mut self, place: &'static str) -> Result<Name, ParserError> {
+        let maybe_name = self
+            .next()?
+            .ok_or_else(|| self.bad_eof(format!("looking for a type name in {place}")))?;
+
+        if let Token::OperatorName(x) = maybe_name.token {
+            Ok(Name::new(self.to_location(maybe_name.span), x))
+        } else {
+            self.save(maybe_name.clone());
+            Err(ParserError::UnexpectedToken {
+                file: self.file.clone(),
+                span: maybe_name.span,
+                token: maybe_name.token,
+                expected: format!("looking for an operator name in {place}"),
             })
         }
     }
