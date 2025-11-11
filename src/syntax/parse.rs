@@ -261,6 +261,15 @@ impl<'lexer> Parser<'lexer> {
         }
     }
 
+    #[allow(unused)]
+    fn print_next_token(&mut self, comment: &str) {
+        let token = self.next().expect("can get token");
+        println!("[{comment}] next token will be {:?}", token.as_ref().map(|x| x.token.clone()));
+        if let Some(token) = token {
+            self.save(token);
+        }
+    }
+
     /// Parse a definition in a file (structure, enumeration, value, etc.).
     ///
     /// This will read a definition. If there's an error, it's very likely the
@@ -394,6 +403,7 @@ impl<'lexer> Parser<'lexer> {
         let next = self
             .next()?
             .ok_or_else(|| self.bad_eof("looking for definition body"))?;
+        self.save(next.clone());
 
         if let Ok(structure) = self.parse_structure() {
             return Ok(Def::Structure(structure));

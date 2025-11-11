@@ -232,6 +232,10 @@ impl TypeRestrictions {
             restrictions: vec![],
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.restrictions.is_empty()
+    }
 }
 
 #[derive(Debug)]

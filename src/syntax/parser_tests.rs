@@ -1001,3 +1001,86 @@ fn patterns() {
           type_name.as_printed() == "Enumeration" &&
           variant_name.as_printed() == "Value"))));
 }
+
+#[test]
+fn definitions() {
+    let parse_def = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new("test", lexer);
+        result.parse_definition()
+    };
+
+    assert!(matches!(
+     parse_def("x = 1;"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Value(ValueDef { name, mtype: None, value, .. }) if
+        name.as_printed() == "x" &&
+        matches!(value, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 1))));
+    assert!(parse_def("x = 1").is_err());
+    assert!(matches!(
+     parse_def("x: Integer = 1;"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Value(ValueDef { name, mtype: Some(_), value, .. }) if
+        name.as_printed() == "x" &&
+        matches!(value, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 1))));
+    assert!(matches!(
+     parse_def("export x: Integer = 1;"),
+     Ok(Definition { export: ExportClass::Public, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Value(ValueDef { name, mtype: Some(_), value, .. }) if
+        name.as_printed() == "x" &&
+        matches!(value, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 1))));
+    assert!(matches!(
+     parse_def("export restrict() x: Integer = 1;"),
+     Ok(Definition { export: ExportClass::Public, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Value(ValueDef { name, mtype: Some(_), value, .. }) if
+        name.as_printed() == "x" &&
+        matches!(value, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 1))));
+    assert!(matches!(
+     parse_def("export restrict(Numeric a) x: a = 1;"),
+     Ok(Definition { export: ExportClass::Public, type_restrictions, definition, .. }) if
+      matches!(&type_restrictions, TypeRestrictions { restrictions } if
+        restrictions.len() == 1 &&
+        matches!(restrictions.first(), Some(TypeRestriction{ constructor, arguments }) if
+          matches!(constructor, Type::Constructor(_, n) if n.as_printed() == "Numeric") &&
+          matches!(arguments.as_slice(), [Type::Variable(_, n)] if n.as_printed() == "a"))) &&
+      matches!(&definition, Def::Value(ValueDef { name, mtype: Some(t), value, .. }) if
+        name.as_printed() == "x" &&
+        matches!(t, Type::Variable(_, n) if n.as_printed() == "a") &&
+        matches!(value, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 1))));
+    assert!(matches!(
+     parse_def("function() { }"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Function(FunctionDef { name, arguments, return_type, body, .. }) if
+       name.as_printed() == "function" &&
+       arguments.is_empty() &&
+       return_type.is_none() &&
+       body.len() == 1)));
+    assert!(matches!(
+     parse_def("function() { 1 }"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Function(FunctionDef { name, arguments, return_type, body, .. }) if
+       name.as_printed() == "function" &&
+       arguments.is_empty() &&
+       return_type.is_none() &&
+       body.len() == 1)));
+    assert!(matches!(
+     parse_def("function(): Integer { 1 }"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Function(FunctionDef { name, arguments, return_type, body, .. }) if
+       name.as_printed() == "function" &&
+       arguments.is_empty() &&
+       return_type.is_some() &&
+       body.len() == 1)));
+}
