@@ -868,6 +868,13 @@ fn blocks() {
        matches!(primv.as_ref(), Expression::Reference(_,n) if
         n.as_printed() == "%prim%void"))));
     assert!(matches!(
+     parse_ex("{ x;;; y }"),
+     Ok(Expression::Block(_, x)) if
+      matches!(x.as_slice(), [
+        Statement::Expression(Expression::Reference(_,x)),
+        Statement::Expression(Expression::Reference(_,y)),
+      ] if x.as_printed() == "x" && y.as_printed() == "y")));
+    assert!(matches!(
      parse_ex("{ x; y }"),
      Ok(Expression::Block(_, x)) if
       matches!(x.as_slice(), [

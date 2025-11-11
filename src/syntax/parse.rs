@@ -185,6 +185,28 @@ impl<'lexer> Parser<'lexer> {
         }
     }
 
+    /// See if the next token is an operator, as expected.
+    ///
+    /// If it isn't, this routine will provide an error, but it will make
+    /// sure to put the token back into the stream.
+    fn require_operator(&mut self, op: &'static str) -> Result<Location, ParserError> {
+        match self.next()? {
+            None => Err(self.bad_eof(format!("looking for symbol '{op}'"))),
+            Some(ltoken) => match ltoken.token {
+                Token::OperatorName(s) if s.as_str() == op => Ok(self.to_location(ltoken.span)),
+                _ => {
+                    self.save(ltoken.clone());
+                    Err(ParserError::UnexpectedToken {
+                        file: self.file.clone(),
+                        span: ltoken.span,
+                        token: ltoken.token,
+                        expected: format!("symbol {op}"),
+                    })
+                }
+            },
+        }
+    }
+
     /// See if the next token is the given one, as expected.
     ///
     /// If it isn't, this routine will provide an error, but it will make
@@ -623,7 +645,7 @@ impl<'lexer> Parser<'lexer> {
             //      x => x * fact(x - 1),
             //    }
             // }
-            // 
+            //
             // Or any of many variations of that.
             Token::OpenParen => {
                 unimplemented!()
@@ -668,6 +690,12 @@ impl<'lexer> Parser<'lexer> {
         }
     }
 
+    /// Parse a single expression out of the input stream.
+    ///
+    /// Because expressions can start with so many possible tokens, it's very
+    /// likely that if you call this, the input stream will be corrupted by any
+    /// errors this function returns. So you should be careful to only call it
+    /// in situations that don't require rollback.
     pub fn parse_expression(&mut self) -> Result<Expression, ParserError> {
         let next = self
             .next()?
@@ -685,63 +713,35 @@ impl<'lexer> Parser<'lexer> {
         }
     }
 
+    /// Parse a match expression.
+    ///
+    /// This function does assume that the next token in the input stream will
+    /// be the "match" keyword, and will error immediately (albeit, saving the
+    /// stream) if it isn't. So you *can* use this if you're not sure this is
+    /// a match expression, and want to escape if it isn't.
     fn parse_match_expression(&mut self) -> Result<MatchExpr, ParserError> {
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for a 'match' to open a pattern match"))?;
-
-        if !matches!(next.token, Token::ValueName(ref x) if x == "match") {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: next.span,
-                token: next.token,
-                expected: "an 'match' to start a pattern match".into(),
-            });
-        }
-        let start = self.to_location(next.span);
-
+        let start = self.require_keyword("match")?;
         let value = Box::new(self.parse_arithmetic(0)?);
-
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for an open brace after 'match'"))?;
-        if !matches!(next.token, Token::OpenBrace) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: next.span,
-                token: next.token,
-                expected: "an open brace after the match expression".into(),
-            });
-        }
+        self.require_token(Token::OpenBrace, "start of a match case list")?;
 
         let mut cases = vec![];
-
         while let Some(case) = self.parse_match_case()? {
             cases.push(case);
         }
 
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for an open brace after 'match'"))?;
-        if !matches!(next.token, Token::CloseBrace) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: next.span,
-                token: next.token,
-                expected: "a close brace to end a match expression".into(),
-            });
-        }
-        let end = self.to_location(next.span);
-
-        let location = start.extend_to(&end);
-
+        let end = self.require_token(Token::CloseBrace, "end of a match case list")?;
         Ok(MatchExpr {
-            location,
+            location: start.extend_to(&end),
             value,
             cases,
         })
     }
 
+    /// Parse a single match case.
+    ///
+    /// A match case consists of a pattern, a double-arrow, and then an expression
+    /// describing what to do if that pattern matches the expression. It may or may
+    /// not conclude with a comma.
     fn parse_match_case(&mut self) -> Result<Option<MatchCase>, ParserError> {
         // skip over anything we can just skip
         loop {
@@ -764,18 +764,7 @@ impl<'lexer> Parser<'lexer> {
         }
 
         let pattern = self.parse_pattern()?;
-
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for an open brace after 'match'"))?;
-        if !matches!(next.token, Token::Arrow) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: next.span,
-                token: next.token,
-                expected: "an arrow after a pattern, as part of a match case".into(),
-            });
-        }
+        self.require_token(Token::Arrow, "after pattern in match clause")?;
 
         let consequent = self.parse_expression()?;
 
@@ -785,6 +774,12 @@ impl<'lexer> Parser<'lexer> {
         }))
     }
 
+    /// Parse a pattern from the input stream.
+    ///
+    /// Patterns are a recursive, complex structure without a clear opening token.
+    /// So ... you better be sure that you want a pattern when you call this,
+    /// because you're almost certainly not going to be able to recover and try
+    /// something else if this breaks.
     pub fn parse_pattern(&mut self) -> Result<Pattern, ParserError> {
         if let Ok(constant) = self.parse_constant() {
             return Ok(Pattern::Constant(constant));
@@ -815,21 +810,10 @@ impl<'lexer> Parser<'lexer> {
                             fields.push(field_pattern)
                         }
 
-                        let final_brace = self.next()?.ok_or_else(|| {
-                            self.bad_eof("looking for closing brace in structure pattern.")
-                        })?;
-                        if !matches!(final_brace.token, Token::CloseBrace) {
-                            return Err(ParserError::UnexpectedToken {
-                                file: self.file.clone(),
-                                span: final_brace.span,
-                                token: final_brace.token,
-                                expected: "closing brace in structure pattern".into(),
-                            });
-                        }
-                        let final_brace_location = self.to_location(final_brace.span);
-
+                        let end =
+                            self.require_token(Token::CloseBrace, "after structure pattern")?;
                         let structure_pattern = StructurePattern {
-                            location: start.extend_to(&final_brace_location),
+                            location: start.extend_to(&end),
                             type_name,
                             fields,
                         };
@@ -838,47 +822,18 @@ impl<'lexer> Parser<'lexer> {
                     }
 
                     Token::DoubleColon => {
-                        let vname = self.next()?.ok_or_else(|| {
-                            self.bad_eof("looking for enumeration value name in pattern")
-                        })?;
+                        let variant_name =
+                            self.parse_type_name("enumeration pattern variant name")?;
 
-                        let variant_name = match vname.token {
-                            Token::TypeName(s) => {
-                                let loc = self.to_location(vname.span.clone());
-                                Name::new(loc, s)
-                            }
-
-                            _ => {
-                                return Err(ParserError::UnexpectedToken {
-                                    file: self.file.clone(),
-                                    span: vname.span,
-                                    token: vname.token,
-                                    expected: "enumeration value name in pattern".into(),
-                                });
-                            }
-                        };
-
-                        let mut final_location = self.to_location(vname.span);
+                        let mut final_location = variant_name.location().unwrap().clone();
 
                         let argument = if let Some(maybe_paren) = self.next()? {
                             if matches!(maybe_paren.token, Token::OpenParen) {
                                 let sub_pattern = self.parse_pattern()?;
-
-                                let tok = self.next()?.ok_or_else(|| {
-                                    self.bad_eof(
-                                        "looking for close paren after enum value argument",
-                                    )
-                                })?;
-                                if !matches!(tok.token, Token::CloseParen) {
-                                    return Err(ParserError::UnexpectedToken {
-                                        file: self.file.clone(),
-                                        span: tok.span,
-                                        token: tok.token,
-                                        expected: "close paren after enum value argument".into(),
-                                    });
-                                }
-
-                                final_location = self.to_location(tok.span);
+                                final_location = self.require_token(
+                                    Token::CloseParen,
+                                    "after enumeration pattern argument",
+                                )?;
 
                                 Some(Box::new(sub_pattern))
                             } else {
@@ -918,6 +873,16 @@ impl<'lexer> Parser<'lexer> {
         }
     }
 
+    /// Parse a field pattern.
+    ///
+    /// For reference, a field pattern is either just the name of a field, or a name of a
+    /// field plus a colon and some form of subpattern. This can be used to either rename
+    /// a field or to only match when a field has a particular value.
+    ///
+    /// Regardless, this should start with a name, and if it doesn't start with a name,
+    /// we'll return Ok(None) to indicate that we're done parsing field patterns. If we
+    /// do get a name and then reach some sort of error, though, who knows what state we'll
+    /// end up in.
     fn parse_field_pattern(&mut self) -> Result<Option<(Name, Option<Pattern>)>, ParserError> {
         let next = self
             .next()?
@@ -986,69 +951,42 @@ impl<'lexer> Parser<'lexer> {
         Ok(Some((name, sub_pattern)))
     }
 
+    /// Parse an if expression.
+    ///
+    /// Like many of these functions, there's a nice indicator immediately available to us
+    /// so that we know whether or not this is an if statement. If we don't see it, we will
+    /// return with an error but the input stream will be clean. However, if we do see one,
+    /// and there's an error down the line, then there's nothing we can do.
     fn parse_if_expression(&mut self) -> Result<ConditionalExpr, ParserError> {
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for an 'if' to start conditional"))?;
-        if !matches!(next.token, Token::ValueName(ref x) if x == "if") {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: next.span,
-                token: next.token,
-                expected: "an 'if' to start a conditional".into(),
-            });
-        }
-        let start = self.to_location(next.span);
-
+        let start = self.require_keyword("if")?;
         let test = self.parse_arithmetic(0)?;
         let consequent = self.parse_block()?;
+        let mut alternative = None;
 
-        let maybe_else = self.next()?;
-        let (alternative, location) = match maybe_else {
-            Some(LocatedToken {
-                token: Token::ValueName(ref n),
-                ..
-            }) if n == "else" => {
-                let expr = self.parse_block()?;
-                let location = match expr {
-                    Expression::Block(ref l, _) => l.clone(),
-                    _ => panic!("How did parse_block not return a block?!"),
-                };
+        if self.require_keyword("else").is_ok() {
+            alternative = Some(Box::new(self.parse_block()?));
+        }
 
-                (Some(Box::new(expr)), location)
-            }
-
-            _ => {
-                let location = match consequent {
-                    Expression::Block(ref l, _) => l.clone(),
-                    _ => panic!("How did parse_block not return a block?!"),
-                };
-
-                (None, location)
-            }
-        };
+        let end = alternative
+            .as_ref()
+            .map(|x| x.location())
+            .unwrap_or_else(|| consequent.location());
 
         Ok(ConditionalExpr {
-            location: start.extend_to(&location),
+            location: start.extend_to(&end),
             test: Box::new(test),
             consequent: Box::new(consequent),
             alternative,
         })
     }
 
+    /// Parse a block.
+    ///
+    /// A block starts with an open brace -- so if we don't see one, we'll exit cleanly --
+    /// but gets real complicated after that. So, once again, be thoughtful about how this
+    /// is called.
     pub fn parse_block(&mut self) -> Result<Expression, ParserError> {
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for open brace to start block"))?;
-        if !matches!(next.token, Token::OpenBrace) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: next.span,
-                token: next.token,
-                expected: "an open brace to start a block".into(),
-            });
-        }
-        let start = self.to_location(next.span);
+        let start = self.require_token(Token::OpenBrace, "start of a block")?;
 
         let mut statements = vec![];
         let mut ended_with_expr = false;
@@ -1061,18 +999,7 @@ impl<'lexer> Parser<'lexer> {
             }
         }
 
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for statement or block close"))?;
-        if !matches!(next.token, Token::CloseBrace) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: next.span,
-                token: next.token,
-                expected: "a close brace to end a block".into(),
-            });
-        }
-        let end = self.to_location(next.span);
+        let end = self.require_token(Token::CloseBrace, "end of a block")?;
 
         if !ended_with_expr {
             let void_name = Name::new(end.clone(), "%prim%void");
@@ -1084,104 +1011,61 @@ impl<'lexer> Parser<'lexer> {
         Ok(Expression::Block(start.extend_to(&end), statements))
     }
 
+    /// Parse a statement, or return None if we're now done with parsing a block.
+    ///
+    /// We know we're done parsing a block when we hit a close brace, basically. We
+    /// should ignore excess semicolons cleanly, and that sort of thing. Because
+    /// statements vary pretty widely, you should not assume that the input is clean
+    /// on any sort of error.
     pub fn parse_statement(&mut self) -> Result<Option<(Statement, bool)>, ParserError> {
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for a statement or close brace"))?;
+        loop {
+            let next = self
+                .next()?
+                .ok_or_else(|| self.bad_eof("looking for a statement or close brace"))?;
 
-        match next.token {
-            Token::CloseBrace => {
-                self.save(next);
-                Ok(None)
-            }
-
-            Token::ValueName(ref l) if l == "let" => {
-                self.save(next);
-                Ok(Some((Statement::Binding(self.parse_let()?), false)))
-            }
-
-            _ => {
-                self.save(next);
-                let expr = Statement::Expression(self.parse_expression()?);
-
-                let next = self
-                    .next()?
-                    .ok_or_else(|| self.bad_eof("looking for semicolon or close brace"))?;
-
-                if matches!(next.token, Token::Semi) {
-                    Ok(Some((expr, false)))
-                } else {
+            match next.token {
+                Token::CloseBrace => {
                     self.save(next);
-                    Ok(Some((expr, true)))
+                    return Ok(None);
+                }
+
+                Token::Semi => continue,
+
+                Token::ValueName(ref l) if l == "let" => {
+                    self.save(next);
+                    return Ok(Some((Statement::Binding(self.parse_let()?), false)));
+                }
+
+                _ => {
+                    self.save(next);
+                    let expr = Statement::Expression(self.parse_expression()?);
+
+                    let next = self
+                        .next()?
+                        .ok_or_else(|| self.bad_eof("looking for semicolon or close brace"))?;
+
+                    if matches!(next.token, Token::Semi) {
+                        return Ok(Some((expr, false)));
+                    } else {
+                        self.save(next);
+                        return Ok(Some((expr, true)));
+                    }
                 }
             }
         }
     }
 
+    /// Parse a let statement.
+    ///
+    /// This will assume that the first token in the stream is a "let", and be upset if
+    /// it is not. However, it will be upset cleanly, which is nice.
     pub fn parse_let(&mut self) -> Result<BindingStmt, ParserError> {
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for a let for a binding statement"))?;
-        if !matches!(next.token, Token::ValueName(ref n) if n == "let") {
-            self.save(next.clone());
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: next.span,
-                token: next.token,
-                expected: "a 'let' to open a binding statement".into(),
-            });
-        }
-        let start = self.to_location(next.span);
-
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("'mut' or a variable name"))?;
-        let mutable = matches!(next.token, Token::ValueName(ref n) if n == "mut");
-        if !mutable {
-            self.save(next);
-        }
-
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("a variable name"))?;
-        let variable = match next.token {
-            Token::ValueName(v) => Name::new(self.to_location(next.span), v),
-            _ => {
-                return Err(ParserError::UnexpectedToken {
-                    file: self.file.clone(),
-                    span: next.span,
-                    token: next.token,
-                    expected: "a variable name for the let binding".into(),
-                });
-            }
-        };
-
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("an '=' after a variable name in a binding"))?;
-        if !matches!(next.token, Token::OperatorName(ref x) if x == "=") {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: next.span,
-                token: next.token,
-                expected: "an '=' after the variable name in a let binding".into(),
-            });
-        }
-
+        let start = self.require_keyword("let")?;
+        let mutable = self.require_keyword("mut").is_ok();
+        let variable = self.parse_name("let binding")?;
+        let _ = self.require_operator("=")?;
         let value = self.parse_expression()?;
-
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for terminal semicolon for let statement"))?;
-        if !matches!(next.token, Token::Semi) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: next.span,
-                token: next.token,
-                expected: "a semicolon to finish a let statement".into(),
-            });
-        }
-        let end = self.to_location(next.span);
+        let end = self.require_token(Token::Semi, "let statement")?;
 
         Ok(BindingStmt {
             location: start.extend_to(&end),
@@ -1191,6 +1075,17 @@ impl<'lexer> Parser<'lexer> {
         })
     }
 
+    /// Parse an arithmetic expression, obeying the laws of precedence.
+    ///
+    /// This is an implementation of Pratt Parsing, although I've probably done it in
+    /// a much more awkward way than necessary. I was heavily inspired and/or stole
+    /// code directly from [this
+    /// article](https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html),
+    /// which was instrumental in its design. All errors mine.
+    ///
+    /// Note that because arithmetic expressions can start with so many tokens, you
+    /// should only call this function if you are absolutely sure that there's an
+    /// expression waiting for you, and it would be an error if there wasn't.
     pub fn parse_arithmetic(&mut self, level: u8) -> Result<Expression, ParserError> {
         // start by checking for prefix operators.
         let next = self
@@ -1277,20 +1172,14 @@ impl<'lexer> Parser<'lexer> {
         Ok(lhs)
     }
 
+    /// Parse the arguments to a function call.
+    ///
+    /// We assume that, at this point, you have eaten the thing you're calling out of
+    /// the input stream, and are on the parenthesis that defines the arguments to the
+    /// function. If you're not there, then this will error, but in a way that you can
+    /// recover from.
     fn parse_call_arguments(&mut self) -> Result<Vec<Expression>, ParserError> {
-        let next = self
-            .next()?
-            .ok_or_else(|| self.bad_eof("looking for open paren for function arguments"))?;
-
-        if !matches!(next.token, Token::OpenParen) {
-            return Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span: next.span,
-                token: next.token,
-                expected: "open paren for call arguments".into(),
-            });
-        }
-
+        let _ = self.require_token(Token::OpenParen, "for function arguments")?;
         let mut args = vec![];
 
         loop {
@@ -1378,7 +1267,8 @@ impl<'lexer> Parser<'lexer> {
                             fields.push(field);
                         }
 
-                        let brace = self.require_token(Token::CloseBrace, "end of structure value")?;
+                        let brace =
+                            self.require_token(Token::CloseBrace, "end of structure value")?;
 
                         let sv = StructureExpr {
                             location: self.to_location(next.span).extend_to(&brace),
@@ -1413,7 +1303,8 @@ impl<'lexer> Parser<'lexer> {
                         let (argument, end_loc) = if let Some(maybe_paren) = self.next()? {
                             if matches!(maybe_paren.token, Token::OpenParen) {
                                 let expr = self.parse_expression()?;
-                                let closer = self.require_token(Token::CloseParen, "after variant argument")?;
+                                let closer = self
+                                    .require_token(Token::CloseParen, "after variant argument")?;
 
                                 (Some(Box::new(expr)), closer)
                             } else {
