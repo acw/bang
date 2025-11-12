@@ -411,12 +411,18 @@ impl<'a> LexerState<'a> {
             });
         }
 
-        let mut value = 0;
+        let mut value: u32 = 0;
 
         while let Some((idx, char)) = self.next_char() {
             if let Some(digit) = char.to_digit(16) {
-                value = (value * 16) + digit;
-                continue;
+                if let Some(shifted) = value.checked_shl(4) {
+                    value = shifted + digit;
+                    continue;
+                } else {
+                    return Err(LexerError::InvalidUnicode {
+                        span: token_start_offset..idx,
+                    });
+                }
             }
 
             if char == '}' {
@@ -729,4 +735,18 @@ fn arrow_requires_nonop() {
     let mut lexer = Lexer::from("->x");
     let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").token);
     assert_eq!(Some(Token::Arrow), next_token());
+}
+
+#[test]
+fn unicode() {
+    let mut lexer = Lexer::from("'\\u{00BE}'");
+    let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").token);
+    assert_eq!(Some(Token::Character('¾')), next_token());
+
+    let mut lexer = Lexer::from("'\\u{111111111111}'");
+    assert!(lexer.next().unwrap().is_err());
+    let mut lexer = Lexer::from("'\\u{00BE'");
+    assert!(lexer.next().unwrap().is_err());
+    let mut lexer = Lexer::from("'\\u00BE}'");
+    assert!(lexer.next().unwrap().is_err());
 }

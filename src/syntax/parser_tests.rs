@@ -254,7 +254,6 @@ fn structures() {
     assert!(parse_st("structure {").is_err());
     assert!(parse_st("structure foo {}").is_err());
 
-    println!("result: {:?}", parse_st("structure Foo {}"));
     assert!(matches!(
         parse_st("structure Foo {}"),
         Ok(StructureDef { name, fields, .. })
@@ -480,7 +479,6 @@ fn structure_value() {
     assert!(parse_st("Foo{ foo, }").is_err());
     assert!(parse_st("Foo{ foo: , }").is_err());
     assert!(parse_st("Foo{ , foo: 1, }").is_err());
-    println!("result: {:?}", parse_st("Foo{ foo: 1 }"));
     assert!(matches!(
       parse_st("Foo{ foo: 1 }"),
       Ok(Expression::Structure(sv))
@@ -1083,4 +1081,105 @@ fn definitions() {
        arguments.is_empty() &&
        return_type.is_some() &&
        body.len() == 1)));
+}
+
+#[test]
+fn operators() {
+    let parse = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new("test", lexer);
+        result.parse_module()
+    };
+
+    let all_the_operators = r#"
+prefix operator - -> negate;
+postfix operator ++ -> mutable_add;
+infix left operator + -> sum;
+infix right operator - -> subtract;
+infix operator * at 8 -> multiply;
+postfix operator ! at 3 -> factorial;
+prefix operator $$ at 1 -> money;
+"#;
+
+    assert!(parse(all_the_operators).is_ok());
+
+    assert!(parse("left prefix operator - -> negate;").is_err());
+    assert!(parse("right prefix operator - -> negate;").is_err());
+    assert!(parse("right infix operator - -> negate;").is_err());
+    assert!(parse("left infix operator - -> negate;").is_err());
+    assert!(parse("infix operator at 8 - -> negate;").is_err());
+
+
+    // these are designed to replicate the examples in the infix_and_precedence
+    // tests, but with the precedence set automatically by the parser.
+    let plus_and_times = |expr| format!(r#"
+infix left operator + at 6 -> add;
+infix right operator * at 7 -> mul;
+
+x = {expr};
+"#);
+
+    let plus_example = plus_and_times("1 + 2 + 3");
+    assert!(matches!(
+     parse(&plus_example),
+     Ok(Module { definitions }) if
+      matches!(definitions.last(), Some(Definition{ definition, .. }) if
+       matches!(definition, Def::Value(ValueDef{ value, .. }) if
+        matches!(value, Expression::Call(plus, CallKind::Infix, args) if
+         matches!(plus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
+         matches!(args.as_slice(), [
+           Expression::Call(innerplus, CallKind::Infix, inner_args),
+           Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v3, .. }))
+         ] if *v3 == 3 &&
+           matches!(innerplus.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
+           matches!(inner_args.as_slice(), [
+             Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v1, .. })),
+             Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v2, .. }))
+           ] if *v1 == 1 && *v2 == 2)))))));
+
+    let times_example = plus_and_times("1 * 2 * 3");
+    assert!(matches!(
+     parse(&times_example),
+     Ok(Module { definitions }) if
+      matches!(definitions.last(), Some(Definition{ definition, .. }) if
+       matches!(definition, Def::Value(ValueDef{ value, .. }) if
+        matches!(value, Expression::Call(times, CallKind::Infix, args) if
+         matches!(times.as_ref(), Expression::Reference(_,n) if n.as_printed() == "*") &&
+         matches!(args.as_slice(), [
+           Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v1, .. })),
+           Expression::Call(innertimes, CallKind::Infix, inner_args),
+         ] if *v1 == 1 &&
+           matches!(innertimes.as_ref(), Expression::Reference(_,n) if n.as_printed() == "*") &&
+           matches!(inner_args.as_slice(), [
+             Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v2, .. })),
+             Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v3, .. }))
+           ] if *v2 == 2 && *v3 == 3)))))));
+
+
+    let mixed_example = plus_and_times("1 + 2 * 3 + 4");
+    assert!(matches!(
+     parse(&mixed_example),
+     Ok(Module { definitions }) if
+      matches!(definitions.last(), Some(Definition{ definition, .. }) if
+       matches!(definition, Def::Value(ValueDef{ value, .. }) if
+        matches!(value, Expression::Call(plus_right, CallKind::Infix, outer_args) if
+         matches!(plus_right.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
+         matches!(outer_args.as_slice(), [
+           Expression::Call(plus_left, CallKind::Infix, left_args),
+           Expression::Value(ConstantValue::Integer(_, v4))
+         ] if
+            matches!(v4, IntegerWithBase{ value: 4, .. }) &&
+            matches!(plus_left.as_ref(), Expression::Reference(_,n) if n.as_printed() == "+") &&
+            matches!(left_args.as_slice(), [
+              Expression::Value(ConstantValue::Integer(_, v1)),
+              Expression::Call(times, CallKind::Infix, times_args)
+            ] if
+               matches!(v1, IntegerWithBase{ value: 1, .. }) &&
+               matches!(times.as_ref(), Expression::Reference(_,n) if n.as_printed() == "*") &&
+               matches!(times_args.as_slice(), [
+                 Expression::Value(ConstantValue::Integer(_, v2)),
+                 Expression::Value(ConstantValue::Integer(_, v3))
+               ] if
+                 matches!(v2, IntegerWithBase{ value: 2, .. }) &&
+                 matches!(v3, IntegerWithBase{ value: 3, .. })))))))));
 }

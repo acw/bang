@@ -251,13 +251,12 @@ impl<'lexer> Parser<'lexer> {
         let mut definitions = vec![];
 
         loop {
-            let next_token = self.next()?;
-
-            if next_token.is_none() {
+            if let Some(next_token) = self.next()? {
+                self.save(next_token);
+                definitions.push(self.parse_definition()?);
+            } else {
                 return Ok(Module { definitions });
             }
-
-            definitions.push(self.parse_definition()?);
         }
     }
 
@@ -695,6 +694,8 @@ impl<'lexer> Parser<'lexer> {
         } else {
             5
         };
+
+        let _ = self.require_token(Token::Arrow, "operator definition")?;
 
         let function_name = self.parse_name("operator function definition")?;
         let end = self.require_token(Token::Semi, "end of operator definition")?;
