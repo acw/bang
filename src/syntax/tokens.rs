@@ -644,6 +644,13 @@ fn numbers_work_as_expected() {
     );
     assert_eq!(
         Token::Integer(IntegerWithBase {
+            base: None,
+            value: 10
+        }),
+        parsed_single_token("0010")
+    );
+    assert_eq!(
+        Token::Integer(IntegerWithBase {
             base: Some(10),
             value: 10
         }),
@@ -679,6 +686,20 @@ fn values_work_as_expected() {
         parsed_single_token("alpha")
     );
     assert_eq!(Token::ValueName("ɑ".into()), parsed_single_token("ɑ"));
+}
+
+#[test]
+fn primitives() {
+    assert_eq!(
+        Token::PrimitiveValueName("add_u8".into()),
+        parsed_single_token("prim%add_u8"),
+    );
+    assert_eq!(
+        Token::PrimitiveTypeName("U8".into()),
+        parsed_single_token("prim%U8"),
+    );
+    assert!(Lexer::from("prim%").next().unwrap().is_err());
+    assert!(Lexer::from("prim%%").next().unwrap().is_err());
 }
 
 #[test]
@@ -743,10 +764,119 @@ fn unicode() {
     let mut next_token = move || lexer.next().map(|x| x.expect("Can read valid token").token);
     assert_eq!(Some(Token::Character('¾')), next_token());
 
-    let mut lexer = Lexer::from("'\\u{111111111111}'");
+    let mut lexer = Lexer::from("'\\u{11111111111111111111111111111}'");
     assert!(lexer.next().unwrap().is_err());
     let mut lexer = Lexer::from("'\\u{00BE'");
     assert!(lexer.next().unwrap().is_err());
     let mut lexer = Lexer::from("'\\u00BE}'");
+    assert!(lexer.next().unwrap().is_err());
+    let mut lexer = Lexer::from("'\\u");
+    assert!(lexer.next().unwrap().is_err());
+    let mut lexer = Lexer::from("'\\u{00Z}'");
+    assert!(lexer.next().unwrap().is_err());
+}
+
+#[test]
+fn character_string_errors() {
+    let mut lexer = Lexer::from("'");
+    assert!(lexer.next().unwrap().is_err());
+    let mut lexer = Lexer::from("'-\\");
+    assert!(lexer.next().unwrap().is_err());
+    let mut lexer = Lexer::from("''");
+    assert!(lexer.next().unwrap().is_err());
+    let mut lexer = Lexer::from("'ab'");
+    assert!(lexer.next().unwrap().is_err());
+    let mut lexer = Lexer::from("'\\x'");
+    assert!(lexer.next().unwrap().is_err());
+    let mut lexer = Lexer::from("'a'");
+    assert!(matches!(
+        lexer.next(),
+        Some(Ok(LocatedToken {
+            token: Token::Character('a'),
+            ..
+        }))
+    ));
+    let mut lexer = Lexer::from("'\\0'");
+    assert!(matches!(
+        lexer.next(),
+        Some(Ok(LocatedToken {
+            token: Token::Character('\0'),
+            ..
+        }))
+    ));
+    let mut lexer = Lexer::from("'\\a'");
+    assert!(matches!(
+        lexer.next(),
+        Some(Ok(LocatedToken {
+            token: Token::Character(_),
+            ..
+        }))
+    ));
+    let mut lexer = Lexer::from("'\\b'");
+    assert!(matches!(
+        lexer.next(),
+        Some(Ok(LocatedToken {
+            token: Token::Character(_),
+            ..
+        }))
+    ));
+    let mut lexer = Lexer::from("'\\f'");
+    assert!(matches!(
+        lexer.next(),
+        Some(Ok(LocatedToken {
+            token: Token::Character(_),
+            ..
+        }))
+    ));
+    let mut lexer = Lexer::from("'\\n'");
+    assert!(matches!(
+        lexer.next(),
+        Some(Ok(LocatedToken {
+            token: Token::Character(_),
+            ..
+        }))
+    ));
+    let mut lexer = Lexer::from("'\\r'");
+    assert!(matches!(
+        lexer.next(),
+        Some(Ok(LocatedToken {
+            token: Token::Character(_),
+            ..
+        }))
+    ));
+    let mut lexer = Lexer::from("'\\t'");
+    assert!(matches!(
+        lexer.next(),
+        Some(Ok(LocatedToken {
+            token: Token::Character(_),
+            ..
+        }))
+    ));
+    let mut lexer = Lexer::from("'\\v'");
+    assert!(matches!(
+        lexer.next(),
+        Some(Ok(LocatedToken {
+            token: Token::Character(_),
+            ..
+        }))
+    ));
+    let mut lexer = Lexer::from("'\\''");
+    assert!(matches!(
+        lexer.next(),
+        Some(Ok(LocatedToken {
+            token: Token::Character('\''),
+            ..
+        }))
+    ));
+    let mut lexer = Lexer::from("'\\\\'");
+    assert!(matches!(
+        lexer.next(),
+        Some(Ok(LocatedToken {
+            token: Token::Character('\\'),
+            ..
+        }))
+    ));
+
+    let mut lexer = Lexer::from("\"foo");
     assert!(lexer.next().unwrap().is_err());
 }

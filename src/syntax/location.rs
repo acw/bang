@@ -38,6 +38,13 @@ impl Location {
         }
     }
 
+    pub fn manufactured() -> Self {
+        Location {
+            file: ArcIntern::new("<manufactured>".into()),
+            span: 0..0,
+        }
+    }
+
     pub fn extend_to(&self, other: &Location) -> Location {
         assert_eq!(self.file, other.file);
         Location {
@@ -50,12 +57,23 @@ impl Location {
         self.span = min(self.span.start, span.start)..max(self.span.end, span.end);
         self
     }
+}
 
-    pub fn file(&self) -> &str {
-        self.file.to_str().unwrap_or("<bad_name>")
-    }
+#[test]
+fn extension_and_merge() {
+    let file = ArcIntern::new("/foo/bar.txt".into());
+    let loc1 = Location::new(&file, 1..4);
+    let loc2 = Location::new(&file, 4..8);
 
-    pub fn span(&self) -> Range<usize> {
-        self.span.clone()
-    }
+    assert_eq!(loc1.extend_to(&loc2).source(), &file);
+    assert_eq!(loc1.extend_to(&loc2).start(), 1);
+    assert_eq!(loc1.extend_to(&loc2).end(), 8);
+
+    let loc3 = Location::new(&file, 12..16);
+    assert_eq!(loc1.extend_to(&loc3).source(), &file);
+    assert_eq!(loc1.extend_to(&loc3).start(), 1);
+    assert_eq!(loc1.extend_to(&loc3).end(), 16);
+
+    assert_eq!(loc1.clone().merge_span(0..1).start(), 0);
+    assert_eq!(loc1.merge_span(0..1).end(), 4);
 }

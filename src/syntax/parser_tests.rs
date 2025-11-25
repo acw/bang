@@ -114,6 +114,9 @@ fn types() {
                        if b1.as_printed() == "a" && b2.as_printed() == "b")) &&
                matches!(z.as_ref(), Type::Variable(_, z1) if z1.as_printed() == "z")
     ));
+    assert!(parse_type("Cons a b ->").is_err());
+    assert!(parse_type("(Cons a b) (Cons a b)").is_err());
+    assert!(parse_type("(Cons a b) (Cons a b) :").is_err());
 }
 
 #[test]
@@ -128,6 +131,17 @@ fn type_restrictions() {
         parse_tr("restrict()"),
         Ok(TypeRestrictions{ restrictions }) if restrictions.is_empty()
     ));
+
+    assert!(matches!(
+        parse_tr("restrict(prim%Cons a b)"),
+        Ok(TypeRestrictions { restrictions }) if restrictions.len() == 1 &&
+          matches!(&restrictions[0], TypeRestriction {
+              constructor,
+              arguments,
+        } if matches!(constructor, Type::Primitive(_, x) if x.as_printed() == "Cons") &&
+             arguments.len() == 2 &&
+             matches!(&arguments[0], Type::Variable(_, x) if x.as_printed() == "a") &&
+             matches!(&arguments[1], Type::Variable(_, x) if x.as_printed() == "b"))));
 
     assert!(matches!(
         parse_tr("restrict(Cons a b)"),
@@ -150,6 +164,8 @@ fn type_restrictions() {
              arguments.len() == 2 &&
              matches!(&arguments[0], Type::Variable(_, x) if x.as_printed() == "a") &&
              matches!(&arguments[1], Type::Variable(_, x) if x.as_printed() == "b"))));
+
+    assert!(parse_tr("restrict(cons a b,)").is_err());
 
     assert!(parse_tr("restrict(,Cons a b,)").is_err());
 
@@ -215,6 +231,9 @@ fn field_definition() {
              matches!(&field_type, Some(Type::Application(c, args))
                  if matches!(c.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Word8") &&
                     args.is_empty())));
+
+    assert!(parse_fd("foo :: Word8,").is_err());
+    assert!(parse_fd("foo: Word8;").is_err());
 
     assert!(matches!(
         parse_fd("foo: Cons a b,"),
@@ -400,6 +419,8 @@ fn enumerations() {
                EnumerationVariant { name: name2, argument: arg2, ..},
            ] if name1.as_printed() == "A" && arg1.is_none() &&
                 name2.as_printed() == "B" && arg2.is_none())));
+    assert!(parse_en("enumeration Alternates { A").is_err());
+    assert!(parse_en("enumeration Alternates { A; B }").is_err());
     assert!(matches!(
       parse_en("enumeration Alternates { A, B, }"),
       Ok(EnumerationDef { name, variants, .. })
@@ -423,6 +444,9 @@ fn expressions() {
     assert!(matches!(
       parse_ex("x"),
       Ok(Expression::Reference(_,n)) if n.as_printed() == "x"));
+    assert!(matches!(
+      parse_ex("X"),
+      Ok(Expression::Reference(_,n)) if n.as_printed() == "X"));
     assert!(matches!(
       parse_ex("(x)"),
       Ok(Expression::Reference(_,n)) if n.as_printed() == "x"));
@@ -453,6 +477,7 @@ fn enumeration_values() {
     };
 
     assert!(parse_ex("Hello::world").is_err());
+    assert!(parse_ex("Hello::world(a,b)").is_err());
     assert!(matches!(
       parse_ex("Hello::World"),
       Ok(Expression::Enumeration(ev))
@@ -465,6 +490,14 @@ fn enumeration_values() {
         if ev.type_name.as_printed() == "Hello" &&
            ev.variant_name.as_printed() == "World" &&
            ev.argument.is_some()));
+    assert!(matches!(
+    parse_ex("Hello::World + 1"),
+    Ok(Expression::Call(plus, CallKind::Infix, args)) if
+     matches!(plus.as_ref(), Expression::Reference(_, n) if n.as_printed() == "+") &&
+     matches!(args.as_slice(), [
+       Expression::Enumeration(_),
+       Expression::Value(_)
+     ])));
 }
 
 #[test]
@@ -475,6 +508,7 @@ fn structure_value() {
         result.parse_expression()
     };
 
+    assert!(parse_st("Foo{").is_err());
     assert!(parse_st("Foo{ , }").is_err());
     assert!(parse_st("Foo{ foo, }").is_err());
     assert!(parse_st("Foo{ foo: , }").is_err());
@@ -635,6 +669,11 @@ fn calls() {
       Ok(Expression::Call(f, CallKind::Normal, args)) if
         matches!(f.as_ref(), Expression::Reference(_,n) if n.as_printed() == "f") &&
         args.is_empty()));
+    assert!(parse_ex("f(").is_err());
+    assert!(parse_ex("f(a").is_err());
+    assert!(parse_ex("f(a,b").is_err());
+    assert!(parse_ex("f(a,b,").is_err());
+    assert!(parse_ex("f(a,b ::").is_err());
     assert!(matches!(
       parse_ex("f(a)"),
       Ok(Expression::Call(f, CallKind::Normal, args)) if
@@ -656,6 +695,14 @@ fn calls() {
           Expression::Reference(_,a),
           Expression::Reference(_,b),
         ] if a.as_printed() == "a" && b.as_printed() == "b")));
+    assert!(matches!(
+      parse_ex("f(A,b,)"),
+      Ok(Expression::Call(f, CallKind::Normal, args)) if
+        matches!(f.as_ref(), Expression::Reference(_,n) if n.as_printed() == "f") &&
+        matches!(args.as_slice(), [
+          Expression::Reference(_,a),
+          Expression::Reference(_,b),
+        ] if a.as_printed() == "A" && b.as_printed() == "b")));
     assert!(parse_ex("f(,a,b,)").is_err());
     assert!(parse_ex("f(a,,b,)").is_err());
     assert!(parse_ex("f(a,b,,)").is_err());
@@ -833,6 +880,9 @@ fn prefix_and_postfix() {
      parse_ex("a * ++ b"),
      Err(ParserError::UnexpectedToken{ token: Token::OperatorName(pp), .. })
       if pp == "++"));
+
+    // this is a little bit of a weird case.
+    assert!(parse_ex("**").is_err());
 }
 
 #[test]
@@ -1084,6 +1134,154 @@ fn definitions() {
 }
 
 #[test]
+fn functions() {
+    let parse_def = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new("test", lexer);
+        result.parse_definition()
+    };
+
+    assert!(matches!(
+     parse_def("function() { }"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Function(FunctionDef { name, arguments, return_type, body, .. }) if
+       name.as_printed() == "function" &&
+       arguments.is_empty() &&
+       return_type.is_none() &&
+       body.len() == 1)));
+    assert!(matches!(
+     parse_def("fun(a) { }"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Function(FunctionDef { name, arguments, return_type, body, .. }) if
+       name.as_printed() == "fun" &&
+       return_type.is_none() &&
+       body.len() == 1 &&
+       matches!(arguments.as_slice(), [FunctionArg{ name, arg_type: None }] if
+        name.as_printed() == "a"))));
+    assert!(matches!(
+     parse_def("fun(a,b) { }"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Function(FunctionDef { name, arguments, return_type, body, .. }) if
+       name.as_printed() == "fun" &&
+       return_type.is_none() &&
+       body.len() == 1 &&
+       matches!(arguments.as_slice(), [
+        FunctionArg{ name: aname, arg_type: None },
+        FunctionArg{ name: bname, arg_type: None }
+       ] if
+        aname.as_printed() == "a" &&
+        bname.as_printed() == "b"))));
+    assert!(matches!(
+     parse_def("fun(a,b,) { }"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Function(FunctionDef { name, arguments, return_type, body, .. }) if
+       name.as_printed() == "fun" &&
+       return_type.is_none() &&
+       body.len() == 1 &&
+       matches!(arguments.as_slice(), [
+        FunctionArg{ name: aname, arg_type: None },
+        FunctionArg{ name: bname, arg_type: None }
+       ] if
+        aname.as_printed() == "a" &&
+        bname.as_printed() == "b"))));
+    assert!(matches!(
+     parse_def("fun(a:U8,b,) { }"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Function(FunctionDef { name, arguments, return_type, body, .. }) if
+       name.as_printed() == "fun" &&
+       return_type.is_none() &&
+       body.len() == 1 &&
+       matches!(arguments.as_slice(), [
+        FunctionArg{ name: aname, arg_type: Some(Type::Application(atype, atype_args)) },
+        FunctionArg{ name: bname, arg_type: None }
+       ] if
+        aname.as_printed() == "a" &&
+        matches!(atype.as_ref(), Type::Constructor(_, n) if n.as_printed() == "U8") &&
+        atype_args.is_empty() &&
+        bname.as_printed() == "b"))));
+    assert!(matches!(
+     parse_def("fun(a:U8,b:U8,) { }"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Function(FunctionDef { name, arguments, return_type, body, .. }) if
+       name.as_printed() == "fun" &&
+       return_type.is_none() &&
+       body.len() == 1 &&
+       matches!(arguments.as_slice(), [
+        FunctionArg{ name: aname, arg_type: Some(Type::Application(atype, atype_args)) },
+        FunctionArg{ name: bname, arg_type: Some(Type::Application(btype, btype_args)) }
+       ] if
+        aname.as_printed() == "a" &&
+        matches!(atype.as_ref(), Type::Constructor(_, n) if n.as_printed() == "U8") &&
+        atype_args.is_empty() &&
+        bname.as_printed() == "b" &&
+        matches!(btype.as_ref(), Type::Constructor(_, n) if n.as_printed() == "U8") &&
+        btype_args.is_empty()))));
+    assert!(matches!(
+     parse_def("fun(a,b:U8,) { }"),
+     Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
+      type_restrictions.is_empty() &&
+      matches!(&definition, Def::Function(FunctionDef { name, arguments, return_type, body, .. }) if
+       name.as_printed() == "fun" &&
+       return_type.is_none() &&
+       body.len() == 1 &&
+       matches!(arguments.as_slice(), [
+        FunctionArg{ name: aname, arg_type: None },
+        FunctionArg{ name: bname, arg_type: Some(Type::Application(btype, btype_args)) }
+       ] if
+        aname.as_printed() == "a" &&
+        bname.as_printed() == "b" &&
+        matches!(btype.as_ref(), Type::Constructor(_, n) if n.as_printed() == "U8") &&
+        btype_args.is_empty()))));
+    assert!(parse_def("fun(a,,b,) { }").is_err());
+}
+
+#[test]
+fn definition_types() {
+    let parse_def = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new("test", lexer);
+        result.parse_definition()
+    };
+
+    assert!(matches!(
+     parse_def("x: prim%U8 = 1;"),
+     Ok(Definition { definition, .. }) if
+      matches!(&definition, Def::Value(ValueDef{ mtype, .. }) if
+       matches!(mtype, Some(Type::Application(f, args)) if
+        args.is_empty() &&
+        matches!(f.as_ref(), Type::Primitive(_, name) if
+         name.as_printed() == "U8")))));
+    assert!(matches!(
+     parse_def("x: Stupid Monad prim%U8 = 1;"),
+     Ok(Definition { definition, .. }) if
+      matches!(&definition, Def::Value(ValueDef{ mtype, .. }) if
+       matches!(mtype, Some(Type::Application(f, args)) if
+        matches!(f.as_ref(), Type::Constructor(_, name) if
+         name.as_printed() == "Stupid") &&
+        matches!(args.as_slice(), [Type::Constructor(_, cname), Type::Primitive(_, pname)] if
+         cname.as_printed() == "Monad" &&
+         pname.as_printed() == "U8")))));
+    assert!(matches!(
+     parse_def("x: Stupid (Monad prim%U8) = 1;"),
+     Ok(Definition { definition, .. }) if
+      matches!(&definition, Def::Value(ValueDef{ mtype, .. }) if
+       matches!(mtype, Some(Type::Application(f, args)) if
+        matches!(f.as_ref(), Type::Constructor(_, name) if
+         name.as_printed() == "Stupid") &&
+        matches!(args.as_slice(), [Type::Application(cname, args2)] if
+         matches!(cname.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Monad") &&
+         matches!(args2.as_slice(), [Type::Primitive(_, pname)] if
+          pname.as_printed() == "U8"))))));
+    assert!(parse_def("x: Stupid (Monad prim%U8 = 1;").is_err());
+}
+
+#[test]
 fn operators() {
     let parse = |str| {
         let lexer = Lexer::from(str);
@@ -1108,16 +1306,21 @@ prefix operator $$ at 1 -> money;
     assert!(parse("right infix operator - -> negate;").is_err());
     assert!(parse("left infix operator - -> negate;").is_err());
     assert!(parse("infix operator at 8 - -> negate;").is_err());
-
+    assert!(parse("infix operator * at 16 -> multiply;").is_err());
+    assert!(parse("infix operator * at apple -> multiply;").is_err());
 
     // these are designed to replicate the examples in the infix_and_precedence
     // tests, but with the precedence set automatically by the parser.
-    let plus_and_times = |expr| format!(r#"
+    let plus_and_times = |expr| {
+        format!(
+            r#"
 infix left operator + at 6 -> add;
 infix right operator * at 7 -> mul;
 
 x = {expr};
-"#);
+"#
+        )
+    };
 
     let plus_example = plus_and_times("1 + 2 + 3");
     assert!(matches!(
@@ -1155,7 +1358,6 @@ x = {expr};
              Expression::Value(ConstantValue::Integer(_, IntegerWithBase{ value: v3, .. }))
            ] if *v2 == 2 && *v3 == 3)))))));
 
-
     let mixed_example = plus_and_times("1 + 2 * 3 + 4");
     assert!(matches!(
      parse(&mixed_example),
@@ -1182,4 +1384,117 @@ x = {expr};
                ] if
                  matches!(v2, IntegerWithBase{ value: 2, .. }) &&
                  matches!(v3, IntegerWithBase{ value: 3, .. })))))))));
+}
+
+#[test]
+fn pattern_match() {
+    let parse_ex = |str| {
+        let lexer = Lexer::from(str);
+        let mut result = Parser::new("test", lexer);
+        result.parse_expression()
+    };
+
+    assert!(matches!(
+     parse_ex("match x { }"),
+     Ok(Expression::Match(MatchExpr{ value, cases, .. })) if
+      matches!(value.as_ref(), Expression::Reference(_, n) if n.as_printed() == "x") &&
+      cases.is_empty()));
+    assert!(matches!(
+     parse_ex("match x { 1 -> 2 }"),
+     Ok(Expression::Match(MatchExpr{ value, cases, .. })) if
+      matches!(value.as_ref(), Expression::Reference(_, n) if n.as_printed() == "x") &&
+      matches!(cases.as_slice(), [MatchCase { pattern, consequent }] if
+        matches!(pattern, Pattern::Constant(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 1) &&
+        matches!(consequent, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 2))));
+    assert!(matches!(
+     parse_ex("match x { 1 -> 2, }"),
+     Ok(Expression::Match(MatchExpr{ value, cases, .. })) if
+      matches!(value.as_ref(), Expression::Reference(_, n) if n.as_printed() == "x") &&
+      matches!(cases.as_slice(), [MatchCase { pattern, consequent }] if
+        matches!(pattern, Pattern::Constant(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 1) &&
+        matches!(consequent, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 2))));
+    assert!(matches!(
+     parse_ex("match x { 1 -> 2, 3 -> 4 }"),
+     Ok(Expression::Match(MatchExpr{ value, cases, .. })) if
+      matches!(value.as_ref(), Expression::Reference(_, n) if n.as_printed() == "x") &&
+      matches!(cases.as_slice(), [mcase1, mcase2] if
+       matches!(mcase1, MatchCase { pattern, consequent } if
+        matches!(pattern, Pattern::Constant(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 1) &&
+        matches!(consequent, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 2)) &&
+       matches!(mcase2, MatchCase { pattern, consequent } if
+        matches!(pattern, Pattern::Constant(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 3) &&
+        matches!(consequent, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 4)))));
+    assert!(matches!(
+     parse_ex("match x { y -> 2, }"),
+     Ok(Expression::Match(MatchExpr{ value, cases, .. })) if
+      matches!(value.as_ref(), Expression::Reference(_, n) if n.as_printed() == "x") &&
+      matches!(cases.as_slice(), [MatchCase { pattern, consequent }] if
+        matches!(pattern, Pattern::Variable(n) if n.as_printed() == "y") &&
+        matches!(consequent, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 2))));
+    assert!(matches!(
+     parse_ex("match x { Option::None -> 2, Option::Some(x) -> 4 }"),
+     Ok(Expression::Match(MatchExpr{ value, cases, .. })) if
+      matches!(value.as_ref(), Expression::Reference(_, n) if n.as_printed() == "x") &&
+      matches!(cases.as_slice(), [mcase1, mcase2] if
+       matches!(mcase1, MatchCase { pattern, consequent } if
+        matches!(pattern, Pattern::EnumerationValue(ep) if
+         matches!(ep, EnumerationPattern{ type_name, variant_name, argument: None, .. } if
+          type_name.as_printed() == "Option" &&
+          variant_name.as_printed() == "None")) &&
+        matches!(consequent, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 2)) &&
+       matches!(mcase2, MatchCase { pattern, consequent } if
+        matches!(pattern, Pattern::EnumerationValue(ep) if
+         matches!(ep, EnumerationPattern{ type_name, variant_name, argument: Some(subp), .. } if
+          type_name.as_printed() == "Option" &&
+          variant_name.as_printed() == "Some" &&
+          matches!(subp.as_ref(), Pattern::Variable(n) if n.as_printed() == "x"))) &&
+        matches!(consequent, Expression::Value(ConstantValue::Integer(_, iwb)) if
+         iwb.value == 4)))));
+    assert!(matches!(
+     parse_ex("match x { Foo{ a, b: 2, c: d } -> 6 }"),
+     Ok(Expression::Match(MatchExpr{ value, cases, .. })) if
+      matches!(value.as_ref(), Expression::Reference(_, n) if n.as_printed() == "x") &&
+      matches!(cases.as_slice(), [MatchCase{ pattern, consequent }] if
+       matches!(pattern, Pattern::Structure(StructurePattern{ type_name, fields, .. }) if
+        type_name.as_printed() == "Foo" &&
+        matches!(fields.as_slice(), [(field1, None), (field2, Some(pat2)), (field3, Some(pat3))] if
+         field1.as_printed() == "a" &&
+         field2.as_printed() == "b" &&
+         field3.as_printed() == "c" &&
+         matches!(pat2, Pattern::Constant(ConstantValue::Integer(_, iwb)) if iwb.value == 2) &&
+         matches!(pat3, Pattern::Variable(n) if n.as_printed() == "d"))) &&
+       matches!(consequent, Expression::Value(ConstantValue::Integer(_, iwb)) if
+        iwb.value == 6))));
+    assert!(matches!(
+     parse_ex("match x { Foo{ a, b: 2, c } -> 6 }"),
+     Ok(Expression::Match(MatchExpr{ value, cases, .. })) if
+      matches!(value.as_ref(), Expression::Reference(_, n) if n.as_printed() == "x") &&
+      matches!(cases.as_slice(), [MatchCase{ pattern, consequent }] if
+       matches!(pattern, Pattern::Structure(StructurePattern{ type_name, fields, .. }) if
+        type_name.as_printed() == "Foo" &&
+        matches!(fields.as_slice(), [(field1, None), (field2, Some(pat2)), (field3, None)] if
+         field1.as_printed() == "a" &&
+         field2.as_printed() == "b" &&
+         field3.as_printed() == "c" &&
+         matches!(pat2, Pattern::Constant(ConstantValue::Integer(_, iwb)) if iwb.value == 2))) &&
+       matches!(consequent, Expression::Value(ConstantValue::Integer(_, iwb)) if
+        iwb.value == 6))));
+
+    assert!(parse_ex("match x { Foo -> 3 }").is_err());
+    assert!(parse_ex("match x { (4) -> 3 }").is_err());
+    assert!(parse_ex("match x { Foo{ 3, x } -> 3 }").is_err());
+    assert!(parse_ex("match x { Foo{ x").is_err());
+    assert!(parse_ex("match x { Foo{ x: 3").is_err());
+    assert!(parse_ex("match x { Foo{ x:: 3").is_err());
+    assert!(parse_ex("match x { Foo{ x: 3 4 } -> 4 }").is_err());
 }

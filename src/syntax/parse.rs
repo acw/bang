@@ -261,9 +261,13 @@ impl<'lexer> Parser<'lexer> {
     }
 
     #[allow(unused)]
+    #[cfg(not(coverage))]
     fn print_next_token(&mut self, comment: &str) {
         let token = self.next().expect("can get token");
-        println!("[{comment}] next token will be {:?}", token.as_ref().map(|x| x.token.clone()));
+        println!(
+            "[{comment}] next token will be {:?}",
+            token.as_ref().map(|x| x.token.clone())
+        );
         if let Some(token) = token {
             self.save(token);
         }
@@ -379,14 +383,7 @@ impl<'lexer> Parser<'lexer> {
             arguments,
         };
 
-        let Some(maybe_comma) = self.next()? else {
-            return Ok(Some(restriction));
-        };
-
-        match maybe_comma.token {
-            Token::Comma => {}
-            _ => self.save(maybe_comma),
-        }
+        let _ = self.require_token(Token::Comma, "");
 
         Ok(Some(restriction))
     }
@@ -402,30 +399,37 @@ impl<'lexer> Parser<'lexer> {
         let next = self
             .next()?
             .ok_or_else(|| self.bad_eof("looking for definition body"))?;
-        self.save(next.clone());
 
-        if let Ok(structure) = self.parse_structure() {
-            return Ok(Def::Structure(structure));
+        match next.token {
+            Token::ValueName(ref x) if x == "structure" => {
+                self.save(next);
+                Ok(Def::Structure(self.parse_structure()?))
+            }
+
+            Token::ValueName(ref x) if x == "enumeration" => {
+                self.save(next);
+                Ok(Def::Enumeration(self.parse_enumeration()?))
+            }
+
+            Token::ValueName(ref x)
+                if x == "operator" || x == "prefix" || x == "infix" || x == "postfix" =>
+            {
+                self.save(next);
+                Ok(Def::Operator(self.parse_operator()?))
+            }
+
+            Token::ValueName(_) => {
+                self.save(next);
+                self.parse_function_or_value()
+            }
+
+            _ => Err(ParserError::UnexpectedToken {
+                file: self.file.clone(),
+                span: next.span,
+                token: next.token,
+                expected: "'structure', 'enumeration', 'operator', or a value identifier".into(),
+            }),
         }
-
-        if let Ok(enumeration) = self.parse_enumeration() {
-            return Ok(Def::Enumeration(enumeration));
-        }
-
-        if let Ok(operator) = self.parse_operator() {
-            return Ok(Def::Operator(operator));
-        }
-
-        if let Ok(fun_or_val) = self.parse_function_or_value() {
-            return Ok(fun_or_val);
-        }
-
-        Err(ParserError::UnexpectedToken {
-            file: self.file.clone(),
-            span: next.span,
-            token: next.token,
-            expected: "'structure', 'enumeration', or a value identifier".into(),
-        })
     }
 
     /// Parse a structure definition.
@@ -821,6 +825,7 @@ impl<'lexer> Parser<'lexer> {
     fn parse_function_def_arguments(&mut self) -> Result<Vec<FunctionArg>, ParserError> {
         let _ = self.require_token(Token::OpenParen, "start of function argument definition")?;
         let mut result = vec![];
+        let mut just_skipped_comma = false;
 
         loop {
             let next = self
@@ -831,7 +836,22 @@ impl<'lexer> Parser<'lexer> {
                 break;
             }
 
+            if matches!(next.token, Token::Comma) {
+                if just_skipped_comma {
+                    return Err(ParserError::UnexpectedToken {
+                        file: self.file.clone(),
+                        span: next.span,
+                        token: next.token,
+                        expected: "after another comma in function arguments".into(),
+                    });
+                }
+
+                just_skipped_comma = true;
+                continue;
+            }
+
             self.save(next);
+            just_skipped_comma = false;
             let name = self.parse_name("function argument name")?;
             let mut arg_type = None;
 
@@ -992,6 +1012,7 @@ impl<'lexer> Parser<'lexer> {
 
                                 Some(Box::new(sub_pattern))
                             } else {
+                                self.save(maybe_paren);
                                 None
                             }
                         } else {
@@ -1410,9 +1431,12 @@ impl<'lexer> Parser<'lexer> {
 
             Token::TypeName(n) | Token::PrimitiveTypeName(n) => {
                 let type_name = Name::new(self.to_location(next.span.clone()), n);
-                let after_type_name = self.next()?.ok_or_else(|| {
-                    self.bad_eof("looking for colon, open brace, or open paren in constructor")
-                })?;
+                let Some(after_type_name) = self.next()? else {
+                    return Ok(Expression::Reference(
+                        type_name.location().unwrap().clone(),
+                        type_name,
+                    ));
+                };
 
                 match after_type_name.token {
                     Token::OpenBrace => {
@@ -1480,12 +1504,13 @@ impl<'lexer> Parser<'lexer> {
                         Ok(Expression::Enumeration(ev))
                     }
 
-                    _ => Err(ParserError::UnexpectedToken {
-                        file: self.file.clone(),
-                        span: after_type_name.span,
-                        token: after_type_name.token,
-                        expected: "colon, open brace, or open paren in constructor".into(),
-                    }),
+                    _ => {
+                        self.save(after_type_name);
+                        Ok(Expression::Reference(
+                            type_name.location().unwrap().clone(),
+                            type_name,
+                        ))
+                    }
                 }
             }
 

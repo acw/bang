@@ -244,13 +244,29 @@ pub struct TypeRestriction {
     pub arguments: Vec<Type>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Type {
     Constructor(Location, Name),
     Variable(Location, Name),
     Primitive(Location, Name),
     Application(Box<Type>, Vec<Type>),
     Function(Vec<Type>, Box<Type>),
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            Type::Constructor(_, x) => matches!(other, Type::Constructor(_, y) if x == y),
+            Type::Variable(_, x) => matches!(other, Type::Variable(_, y) if x == y),
+            Type::Primitive(_, x) => matches!(other, Type::Primitive(_, y) if x == y),
+            Type::Application(con1, args1) => {
+                matches!(other, Type::Application(con2, args2) if con1 == con2 && args1 == args2)
+            }
+            Type::Function(args1, ret1) => {
+                matches!(other, Type::Function(args2, ret2) if args1 == args2 && ret1 == ret2)
+            }
+        }
+    }
 }
 
 impl Located for Type {
@@ -277,7 +293,7 @@ impl Located for Type {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ConstantValue {
     Integer(Location, IntegerWithBase),
     Character(Location, char),
@@ -290,6 +306,18 @@ impl Located for ConstantValue {
             ConstantValue::Integer(l, _) => l.clone(),
             ConstantValue::Character(l, _) => l.clone(),
             ConstantValue::String(l, _) => l.clone(),
+        }
+    }
+}
+
+impl PartialEq for ConstantValue {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            ConstantValue::Character(_, x) => {
+                matches!(other, ConstantValue::Character(_, y) if x == y)
+            }
+            ConstantValue::String(_, x) => matches!(other, ConstantValue::String(_, y) if x == y),
+            ConstantValue::Integer(_, x) => matches!(other, ConstantValue::Integer(_, y) if x == y),
         }
     }
 }

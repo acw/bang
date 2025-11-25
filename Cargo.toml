@@ -6,7 +6,12 @@ edition = "2024"
 [dependencies]
 ariadne = { version = "0.5.1", features = ["auto-color"] }
 internment = { version = "0.8.6", features = ["arc", "arena"] }
+itertools = "0.14.0"
 memmap2 = "0.9.8"
+pretty = { version = "0.12.5", features = ["termcolor"] }
 proptest = "1.7.0"
 proptest-derive = "0.6.0"
 thiserror = "2.0.12"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
