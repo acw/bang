@@ -1,10 +1,10 @@
 name: Matrix
 on:
-  pull_request
-  push:
-    branches:
-      - main
-      - 'releases/**'
+  - pull_request
+  - push:
+      branches:
+        - main
+        - 'releases/**'
 
 jobs:
   strategy:
