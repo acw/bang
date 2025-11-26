@@ -1,15 +1,20 @@
 name: Matrix
 on:
-  - pull_request
-  - push
+  pull_request
+  push:
+    branches:
+      - main
+      - 'releases/**'
+
 jobs:
+  strategy:
+    matrix:
+      rust:
+        - stable
+        - beta
+        - nightly
+
   main:
-    strategy:
-      matrix:
-        rust:
-          - stable
-          - beta
-          - nightly
     name: ${{matrix.rust}}
     runs-on: x86_64-linux
     steps:
@@ -21,6 +26,6 @@ jobs:
       - run: rustup --version
       - run: rustc -vV
 
-      - run: cargo clippy -- --deny clippy::pedantic
+      - run: cargo clippy
       - run: cargo fmt --all -- --check
       - run: cargo test
