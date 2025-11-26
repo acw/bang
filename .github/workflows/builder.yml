@@ -6,25 +6,59 @@ on:
   pull_request:
 
 jobs:
-  strategy:
-    matrix:
-      rust:
-        - stable
-        - beta
-        - nightly
+  format:
+    name: Format
+    runs-on: native:host
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
 
-  main:
-    name: ${{matrix.rust}}
-    runs-on: x86_64-linux
+  clippy:
+    name: Clippy check
+    runs-on: native:host
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo clippy --all-targets -- -D warnings
+
+  build:
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - beta
+          - nightly
+
+    name: Build - ${{matrix.rust}}
+    runs-on: native:host
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{matrix.rust}}
           components: rustfmt, clippy
-      - run: rustup --version
-      - run: rustc -vV
+      - run: cargo build
 
-      - run: cargo clippy
-      - run: cargo fmt --all -- --check
+  test:
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - beta
+          - nightly
+
+    name: Test - ${{matrix.rust}}
+    runs-on: native:host
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{matrix.rust}}
+          components: rustfmt, clippy
       - run: cargo test
+
