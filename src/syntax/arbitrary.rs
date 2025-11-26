@@ -1,12 +1,9 @@
-use std::fmt::Arguments;
-
 use crate::syntax::ast::{ConstantValue, IntegerWithBase, Type};
 use crate::syntax::location::Location;
 use crate::syntax::name::Name;
 use itertools::Itertools;
 use proptest::arbitrary::Arbitrary;
 use proptest::prelude::{BoxedStrategy, Rng};
-use proptest::prop_oneof;
 use proptest::strategy::{NewTree, Strategy, ValueTree};
 use proptest::test_runner::TestRunner;
 
@@ -24,7 +21,7 @@ pub struct TypeGenerationContext {
 }
 
 impl TypeGenerationContext {
-    fn generate_type(&mut self, runner: &mut TestRunner, depth: usize) -> Type {
+    fn generate_type(&self, runner: &mut TestRunner, depth: usize) -> Type {
         let mut leaf_options = vec![];
 
         if !self.available_constructors.is_empty() {
@@ -46,10 +43,31 @@ impl TypeGenerationContext {
             ));
         }
 
-        if depth < MAXIMUM_TYPE_DEPTH && runner.rng().random_bool(0.5) {}
+        let mut possibilities = leaf_options.len();
 
-        let index = runner.rng().random_range(0..leaf_options.len());
-        leaf_options.remove(index)
+        if depth < MAXIMUM_TYPE_DEPTH && runner.rng().random_bool(0.5) {
+            possibilities += 2;
+        }
+
+        let index = runner.rng().random_range(0..possibilities);
+
+        if index >= leaf_options.len() {
+            let argument_count = runner.rng().random_range(0..MAXIMUM_TYPE_WIDTH);
+            let final_type = self.generate_type(runner, depth + 1);
+            let mut args = vec![];
+
+            for _ in 0..argument_count {
+                args.push(self.generate_type(runner, depth + 1));
+            }
+
+            if index - leaf_options.len() == 0 {
+                Type::Function(args, Box::new(final_type))
+            } else {
+                Type::Application(Box::new(final_type), args)
+            }
+        } else {
+            leaf_options.remove(index)
+        }
     }
 }
 
@@ -70,10 +88,6 @@ impl TypeGenerationTree {
             untried_simplified_items: None,
         }
     }
-}
-
-fn generate_powerset(_: &[Type]) -> Vec<Vec<Type>> {
-    vec![]
 }
 
 fn simplify_type(incoming: &Type) -> Vec<Type> {
@@ -275,8 +289,14 @@ impl Strategy for TypeGenerationContext {
     type Tree = TypeGenerationTree;
     type Value = Type;
 
-    fn new_tree(&self, _runner: &mut TestRunner) -> NewTree<Self> {
-        unimplemented!()
+    fn new_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
+        let initial_type = self.generate_type(runner, 0);
+
+        Ok(TypeGenerationTree {
+            current_value: initial_type,
+            parent: None,
+            untried_simplified_items: None,
+        })
     }
 }
 
