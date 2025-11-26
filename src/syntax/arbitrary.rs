@@ -29,31 +29,24 @@ impl TypeGenerationContext {
 
         if !self.available_constructors.is_empty() {
             for name in self.available_constructors.iter() {
-                leaf_options.push(Type::Constructor(
-                    Location::manufactured(),
-                    name.clone(),
-                ));
+                leaf_options.push(Type::Constructor(Location::manufactured(), name.clone()));
             }
         }
 
         if !self.available_variables.is_empty() {
             for name in self.available_variables.iter() {
-                leaf_options.push(Type::Variable(
-                    Location::manufactured(),
-                    name.clone(),
-                ));
+                leaf_options.push(Type::Variable(Location::manufactured(), name.clone()));
             }
         }
 
         for prim in PRIMITIVE_TYPES.iter() {
             leaf_options.push(Type::Primitive(
-               Location::manufactured(),
-               Name::new(Location::manufactured(), prim.to_string()),
+                Location::manufactured(),
+                Name::new(Location::manufactured(), prim.to_string()),
             ));
         }
 
-        if depth < MAXIMUM_TYPE_DEPTH && runner.rng().random_bool(0.5) {
-        }
+        if depth < MAXIMUM_TYPE_DEPTH && runner.rng().random_bool(0.5) {}
 
         let index = runner.rng().random_range(0..leaf_options.len());
         leaf_options.remove(index)
