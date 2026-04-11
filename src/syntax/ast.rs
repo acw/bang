@@ -250,17 +250,26 @@ pub enum Type {
     Variable(Location, Name),
     Primitive(Location, Name),
     Application(Box<Type>, Vec<Type>),
-    Function(Vec<Type>, Box<Type>),
+    Function(Box<Type>, Box<Type>),
 }
 
 impl PartialEq for Type {
     fn eq(&self, other: &Self) -> bool {
+        println!("self: {self:?}");
+        println!("other: {other:?}");
+
+        if matches!(other, Type::Application(con, args) if args.is_empty() && self == con.as_ref())
+        {
+            return true;
+        }
+
         match self {
             Type::Constructor(_, x) => matches!(other, Type::Constructor(_, y) if x == y),
             Type::Variable(_, x) => matches!(other, Type::Variable(_, y) if x == y),
             Type::Primitive(_, x) => matches!(other, Type::Primitive(_, y) if x == y),
             Type::Application(con1, args1) => {
                 matches!(other, Type::Application(con2, args2) if con1 == con2 && args1 == args2)
+                    || (con1.as_ref() == other && args1.is_empty())
             }
             Type::Function(args1, ret1) => {
                 matches!(other, Type::Function(args2, ret2) if args1 == args2 && ret1 == ret2)
@@ -282,13 +291,7 @@ impl Located for Type {
                 }
                 result
             }
-            Type::Function(args, ret) => {
-                if let Some(first) = args.first() {
-                    first.location().extend_to(&ret.location())
-                } else {
-                    ret.location()
-                }
-            }
+            Type::Function(arg, ret) => arg.location().extend_to(&ret.location()),
         }
     }
 }

@@ -52,16 +52,22 @@ impl TypeGenerationContext {
         let index = runner.rng().random_range(0..possibilities);
 
         if index >= leaf_options.len() {
-            let argument_count = runner.rng().random_range(0..MAXIMUM_TYPE_WIDTH);
-            let final_type = self.generate_type(runner, depth + 1);
+            // NB: We may not have an application or a function with no arguments, at least
+            // at this point in the pipeline.
+            let argument_count = runner.rng().random_range(1..MAXIMUM_TYPE_WIDTH);
+            let mut final_type = self.generate_type(runner, depth + 1);
             let mut args = vec![];
 
             for _ in 0..argument_count {
                 args.push(self.generate_type(runner, depth + 1));
             }
 
-            if index - leaf_options.len() == 0 {
-                Type::Function(args, Box::new(final_type))
+            if index - leaf_options.len() == 0 && argument_count > 0 {
+                for arg in args.into_iter() {
+                    final_type = Type::Function(Box::new(arg), Box::new(final_type));
+                }
+
+                final_type
             } else {
                 Type::Application(Box::new(final_type), args)
             }
@@ -95,7 +101,7 @@ fn simplify_type(incoming: &Type) -> Vec<Type> {
         Type::Primitive(_, _) => vec![],
         Type::Constructor(_, _) => vec![],
         Type::Variable(_, _) => vec![],
-        Type::Function(arg_types, ret_type) => {
+        Type::Function(arg_type, ret_type) => {
             let simplified_return_types = simplify_type(ret_type.as_ref());
 
             // we do the following as a set of steps, choosing to go deep rather than
@@ -103,68 +109,28 @@ fn simplify_type(incoming: &Type) -> Vec<Type> {
             //
             //  1. If there are simplifications for the return type, then just
             //     return variations with the simplified return type.
-            //  2. If there are simplifications for the first argument, then
-            //     just return variations with the first argument simplified.
-            //  3. Repeat for each of the arguments.
-            //  4. At this point, all the subtypes are as simple as they can
-            //     be, so return a series of function types with fewer arguments.
-            //  5. If we are a function with no arguments, then just return
-            //     the return type.
+            //  2. If there are simplifications for the argument, then just return
+            //     variations with the argument simplified.
+            //  3. If the argument and return are as simple as they can be, just
+            //     return the return type.
             if !simplified_return_types.is_empty() {
                 return simplified_return_types
                     .into_iter()
-                    .map(|ret| Type::Function(arg_types.clone(), Box::new(ret)))
+                    .map(|ret| Type::Function(arg_type.clone(), Box::new(ret)))
                     .collect();
             }
 
-            // now check the arguments, and see if we can simplify them in a
+            // now check the argument, and see if we can simplify them in a
             // better way.
-            for idx in 0..arg_types.len() {
-                let simplified_arguments = simplify_type(&arg_types[idx]);
-
-                if simplified_arguments.is_empty() {
-                    continue;
-                }
-
-                let mut new_function_types = vec![];
-
-                for simplified_arg in simplified_arguments.into_iter() {
-                    let mut new_args = vec![];
-
-                    for item in &arg_types[0..idx] {
-                        new_args.push(item.clone());
-                    }
-                    new_args.push(simplified_arg);
-                    for item in &arg_types[idx + 1..arg_types.len()] {
-                        new_args.push(item.clone());
-                    }
-
-                    new_function_types.push(Type::Function(new_args, ret_type.clone()));
-                }
-
-                if !new_function_types.is_empty() {
-                    return new_function_types;
-                }
+            let simplified_argument_types = simplify_type(arg_type.as_ref());
+            if !simplified_argument_types.is_empty() {
+                return simplified_argument_types
+                    .into_iter()
+                    .map(|arg| Type::Function(Box::new(arg), ret_type.clone()))
+                    .collect();
             }
 
-            // ok, all of the arguments and the return type are already as
-            // simple as they can be, so let's see if we can reduce the number
-            // of arguments.
-            let mut new_types = vec![];
-            for args in arg_types.iter().powerset() {
-                if args.len() != arg_types.len() {
-                    new_types.push(Type::Function(
-                        args.into_iter().cloned().collect(),
-                        ret_type.clone(),
-                    ));
-                }
-            }
-
-            if new_types.is_empty() {
-                vec![ret_type.as_ref().clone()]
-            } else {
-                new_types
-            }
+            vec![ret_type.as_ref().clone()]
         }
 
         Type::Application(constructor_type, arg_types) => {
@@ -213,7 +179,7 @@ fn simplify_type(incoming: &Type) -> Vec<Type> {
             // and now we'll try to reduce types.
             let mut new_types = vec![];
             for args in arg_types.iter().powerset() {
-                if args.len() != arg_types.len() {
+                if args.len() != arg_types.len() && !args.is_empty() {
                     new_types.push(Type::Application(
                         constructor_type.clone(),
                         args.into_iter().cloned().collect(),
@@ -304,8 +270,8 @@ impl Arbitrary for Type {
     type Parameters = TypeGenerationContext;
     type Strategy = TypeGenerationContext;
 
-    fn arbitrary_with(_context: Self::Parameters) -> Self::Strategy {
-        unimplemented!()
+    fn arbitrary_with(context: Self::Parameters) -> Self::Strategy {
+        context
     }
 }
 
@@ -392,109 +358,24 @@ mod simplifiers {
         );
 
         assert_eq!(
-            simplify_type(&Type::Function(vec![], Box::new(primint.clone()))),
-            vec![primint.clone()]
-        );
-        assert_eq!(
             simplify_type(&Type::Function(
-                vec![primint.clone(), primchar.clone()],
-                Box::new(primint.clone())
+                Box::new(primint.clone()),
+                Box::new(primchar.clone())
             )),
-            vec![
-                Type::Function(vec![], Box::new(primint.clone())),
-                Type::Function(vec![primint.clone()], Box::new(primint.clone())),
-                Type::Function(vec![primchar.clone()], Box::new(primint.clone())),
-            ]
+            vec![primchar.clone()]
         );
         assert_eq!(
             simplify_type(&Type::Function(
-                vec![primint.clone(), primchar.clone(), primstr.clone()],
-                Box::new(primint.clone())
-            )),
-            vec![
-                Type::Function(vec![], Box::new(primint.clone())),
-                Type::Function(vec![primint.clone()], Box::new(primint.clone())),
-                Type::Function(vec![primchar.clone()], Box::new(primint.clone())),
-                Type::Function(vec![primstr.clone()], Box::new(primint.clone())),
-                Type::Function(
-                    vec![primint.clone(), primchar.clone()],
-                    Box::new(primint.clone())
-                ),
-                Type::Function(
-                    vec![primint.clone(), primstr.clone()],
-                    Box::new(primint.clone())
-                ),
-                Type::Function(
-                    vec![primchar.clone(), primstr.clone()],
-                    Box::new(primint.clone())
-                ),
-            ]
-        );
-
-        assert_eq!(
-            simplify_type(&Type::Function(
-                vec![primint.clone(), primchar.clone(), primstr.clone()],
-                Box::new(Type::Function(vec![], Box::new(primint.clone()))),
-            )),
-            vec![Type::Function(
-                vec![primint.clone(), primchar.clone(), primstr.clone()],
-                Box::new(primint.clone())
-            ),]
-        );
-        assert_eq!(
-            simplify_type(&Type::Function(
-                vec![primint.clone(), primchar.clone(), primstr.clone()],
+                Box::new(primint.clone()),
                 Box::new(Type::Function(
-                    vec![primint.clone(), primchar.clone()],
-                    Box::new(primint.clone())
-                )),
-            )),
-            vec![
-                Type::Function(
-                    vec![primint.clone(), primchar.clone(), primstr.clone()],
-                    Box::new(Type::Function(vec![], Box::new(primint.clone())))
-                ),
-                Type::Function(
-                    vec![primint.clone(), primchar.clone(), primstr.clone()],
-                    Box::new(Type::Function(
-                        vec![primint.clone()],
-                        Box::new(primint.clone())
-                    ))
-                ),
-                Type::Function(
-                    vec![primint.clone(), primchar.clone(), primstr.clone()],
-                    Box::new(Type::Function(
-                        vec![primchar.clone()],
-                        Box::new(primint.clone())
-                    ))
-                ),
-            ]
-        );
-        assert_eq!(
-            simplify_type(&Type::Function(
-                vec![
-                    Type::Function(vec![], Box::new(primint.clone())),
-                    primstr.clone()
-                ],
-                Box::new(primint.clone())
+                    Box::new(primchar.clone()),
+                    Box::new(primstr.clone())
+                ))
             )),
             vec![Type::Function(
-                vec![primint.clone(), primstr.clone()],
-                Box::new(primint.clone())
-            )]
-        );
-        assert_eq!(
-            simplify_type(&Type::Function(
-                vec![
-                    primint.clone(),
-                    Type::Function(vec![], Box::new(primint.clone()))
-                ],
-                Box::new(primint.clone())
-            )),
-            vec![Type::Function(
-                vec![primint.clone(), primint.clone()],
-                Box::new(primint.clone())
-            )]
+                Box::new(primint.clone()),
+                Box::new(primstr.clone())
+            )],
         );
 
         let applied = Type::Application(Box::new(primint.clone()), vec![]);
@@ -539,7 +420,6 @@ mod simplifiers {
                 vec![primchar.clone(), primint.clone(), primstr.clone()]
             )),
             vec![
-                Type::Application(Box::new(primint.clone()), vec![]),
                 Type::Application(Box::new(primint.clone()), vec![primchar.clone()]),
                 Type::Application(Box::new(primint.clone()), vec![primint.clone()]),
                 Type::Application(Box::new(primint.clone()), vec![primstr.clone()]),

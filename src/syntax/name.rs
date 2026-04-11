@@ -31,7 +31,7 @@ impl Hash for Name {
 
 impl fmt::Display for Name {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.printable, self.identifier)
+        write!(f, "{}", self.printable)
     }
 }
 

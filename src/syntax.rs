@@ -1,11 +1,14 @@
 mod arbitrary;
 mod ast;
+#[cfg(test)]
+mod equalish;
 mod error;
 mod location;
 mod name;
 mod parse;
 #[cfg(test)]
 mod parser_tests;
+mod precedence_table;
 mod print;
 mod tokens;
 mod universe;

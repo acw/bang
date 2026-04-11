@@ -119,8 +119,8 @@ impl<'a> Iterator for Lexer<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Lexer::Done => None,
-            Lexer::Errored(e) => Some(Err(e.clone())),
+        Lexer::Done => None,
+        Lexer::Errored(e) => Some(Err(e.clone())),
             Lexer::Working(state) => match state.next_token() {
                 Err(e) => {
                     println!("ERROR: {e}");

@@ -1,5 +1,6 @@
 use crate::syntax::error::ParserError;
 use crate::syntax::parse::Parser;
+use crate::syntax::precedence_table::{Associativity, OperatorClass, OperatorType};
 use crate::syntax::tokens::{Lexer, Token};
 use crate::syntax::*;
 
@@ -71,52 +72,91 @@ fn types() {
 
     assert!(matches!(
         parse_type("Cons"),
-        Ok(Type::Application(cons, empty)) if
-            matches!(cons.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Cons") &&
-            empty.is_empty()
-    ));
+        Ok(Type::Constructor(_, c)) if c.as_printed() == "Cons"));
     assert!(matches!(
         parse_type("cons"),
         Ok(Type::Variable(_, c)) if c.as_printed() == "cons"
     ));
+    println!("result: {:?}", parse_type("Cons<a,b>"));
     assert!(matches!(
-        parse_type("Cons a b"),
+        parse_type("Cons<a,b>"),
         Ok(Type::Application(a, b))
             if matches!(a.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Cons") &&
                matches!(b.as_slice(), [Type::Variable(_, b1), Type::Variable(_, b2)]
                    if b1.as_printed() == "a" && b2.as_printed() == "b")
     ));
     assert!(matches!(
+        parse_type("Cons<a, Cons<b, c>, d>"),
+        Ok(Type::Application(cons, stuff)) if
+          matches!(cons.as_ref(), Type::Constructor(_, x) if x.as_printed() == "Cons") &&
+          matches!(stuff.as_slice(), [
+            Type::Variable(_, a),
+            Type::Application(subcons, subargs),
+            Type::Variable(_, d),
+          ] if
+            a.as_printed() == "a" &&
+            d.as_printed() == "d" &&
+            matches!(subcons.as_ref(), Type::Constructor(_, x) if x.as_printed() == "Cons") &&
+            matches!(subargs.as_slice(), [
+              Type::Variable(_, b),
+              Type::Variable(_, c),
+            ] if
+              b.as_printed() == "b" &&
+              c.as_printed() == "c"))));
+    println!("result: {:?}", parse_type("Cons<a, Cons<b><c>, d>"));
+    assert!(matches!(
+        parse_type("Cons<a, Cons<b><c>, d>"),
+        Ok(Type::Application(cons, stuff)) if
+          matches!(cons.as_ref(), Type::Constructor(_, x) if x.as_printed() == "Cons") &&
+          matches!(stuff.as_slice(), [
+            Type::Variable(_, a),
+            Type::Application(subcons, subargs),
+            Type::Variable(_, d),
+          ] if
+            a.as_printed() == "a" &&
+            d.as_printed() == "d" &&
+            matches!(subcons.as_ref(), Type::Application(subsubcons, subsubargs) if
+              matches!(subsubcons.as_ref(), Type::Variable(_, x) if x.as_printed() == "Cons") &&
+              matches!(subsubargs.as_slice(), [Type::Variable(_, x)] if x.as_printed() == "b") &&
+              matches!(subargs.as_slice(), [Type::Variable(_, c)] if
+              c.as_printed() == "c")))));
+    assert!(matches!(
         parse_type("a -> z"),
         Ok(Type::Function(a, z))
-            if matches!(a.as_slice(), [Type::Variable(_, a1)] if a1.as_printed() == "a") &&
+            if matches!(a.as_ref(), Type::Variable(_, a1) if a1.as_printed() == "a") &&
                matches!(z.as_ref(), Type::Variable(_, z1) if z1.as_printed() == "z")
     ));
     assert!(matches!(
         parse_type("(a -> z)"),
         Ok(Type::Function(a, z))
-            if matches!(a.as_slice(), [Type::Variable(_, a1)] if a1.as_printed() == "a") &&
+            if matches!(a.as_ref(), Type::Variable(_, a1) if a1.as_printed() == "a") &&
                matches!(z.as_ref(), Type::Variable(_, z1) if z1.as_printed() == "z")
     ));
     assert!(matches!(
-        parse_type("a b -> z"),
-        Ok(Type::Function(a, z))
-            if matches!(a.as_slice(), [Type::Variable(_, a1), Type::Variable(_, b1)]
-                    if a1.as_printed() == "a" && b1.as_printed() == "b") &&
-               matches!(z.as_ref(), Type::Variable(_, z1) if z1.as_printed() == "z")
+        parse_type("a -> b -> z"),
+        Ok(Type::Function(a, bf))
+            if matches!(a.as_ref(), Type::Variable(_, a1) if a1.as_printed() == "a") &&
+               matches!(bf.as_ref(), Type::Function(b, z) if
+                 matches!(b.as_ref(), Type::Variable(_, b) if b.as_printed() == "b") &&
+                 matches!(z.as_ref(), Type::Variable(_, z) if z.as_printed() == "z"))
     ));
     assert!(matches!(
-        parse_type("Cons a b -> z"),
+        parse_type("Cons<a,b> -> z"),
         Ok(Type::Function(a, z))
-            if matches!(a.as_slice(), [Type::Application(cons, appargs)]
+            if matches!(a.as_ref(), Type::Application(cons, appargs)
                 if matches!(cons.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Cons") &&
                    matches!(appargs.as_slice(), [Type::Variable(_, b1), Type::Variable(_, b2)]
                        if b1.as_printed() == "a" && b2.as_printed() == "b")) &&
                matches!(z.as_ref(), Type::Variable(_, z1) if z1.as_printed() == "z")
     ));
-    assert!(parse_type("Cons a b ->").is_err());
-    assert!(parse_type("(Cons a b) (Cons a b)").is_err());
-    assert!(parse_type("(Cons a b) (Cons a b) :").is_err());
+    assert!(matches!(
+        parse_type("prim%U8 -> prim%U16 -> z"),
+        Ok(Type::Function(u_8, f))
+          if matches!(u_8.as_ref(), Type::Primitive(_, u_8) if u_8.as_printed() == "U8") &&
+             matches!(f.as_ref(), Type::Function(u_16, z) if
+                   matches!(u_16.as_ref(), Type::Primitive(_, u_16) if u_16.as_printed() == "U16") &&
+                   matches!(z.as_ref(), Type::Variable(_, z) if z.as_printed() == "z"))));
+    assert!(parse_type("Cons<a,b> ->").is_err());
 }
 
 #[test]
@@ -228,9 +268,8 @@ fn field_definition() {
         parse_fd("foo: Word8,"),
         Ok(Some(StructureField{ name, field_type, .. }))
           if name.as_printed() == "foo" &&
-             matches!(&field_type, Some(Type::Application(c, args))
-                 if matches!(c.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Word8") &&
-                    args.is_empty())));
+             matches!(&field_type, Some(Type::Constructor(_, c))
+                 if c.as_printed() == "Word8")));
 
     assert!(parse_fd("foo :: Word8,").is_err());
     assert!(parse_fd("foo: Word8;").is_err());
@@ -249,7 +288,7 @@ fn field_definition() {
         Ok(Some(StructureField{ name, field_type, .. }))
           if name.as_printed() == "foo" &&
              matches!(&field_type, Some(Type::Function(args, ret))
-                 if matches!(&args.as_slice(), &[Type::Variable(_, a)] if a.as_printed() == "a") &&
+                 if matches!(&args.as_ref(), &Type::Variable(_, a) if a.as_printed() == "a") &&
                     matches!(ret.as_ref(), Type::Variable(_, b) if b.as_printed() == "b"))));
 
     assert!(matches!(
@@ -257,7 +296,7 @@ fn field_definition() {
         Ok(Some(StructureField{ name, export: ExportClass::Public, field_type, .. }))
           if name.as_printed() == "foo" &&
              matches!(&field_type, Some(Type::Function(args, ret))
-                 if matches!(&args.as_slice(), &[Type::Variable(_, a)] if a.as_printed() == "a") &&
+                 if matches!(&args.as_ref(), &Type::Variable(_, a) if a.as_printed() == "a") &&
                     matches!(ret.as_ref(), Type::Variable(_, b) if b.as_printed() == "b"))));
 }
 
@@ -291,9 +330,8 @@ fn structures() {
           if name.as_printed() == "Foo" &&
              matches!(fields.as_slice(), &[StructureField { ref name, ref field_type, .. }]
                  if name.as_printed() == "bar" &&
-                    matches!(field_type, Some(Type::Application(c, args))
-                      if matches!(c.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Word8") &&
-                         args.is_empty()))));
+                    matches!(field_type, Some(Type::Constructor(_, c))
+                      if c.as_printed() == "Word8"))));
 
     assert!(matches!(
         parse_st("structure Foo { bar: Word8, goo }"),
@@ -304,12 +342,11 @@ fn structures() {
                  StructureField { name: ref name2, field_type: None, .. }]
                  if name.as_printed() == "bar" &&
                     name2.as_printed() == "goo" &&
-                    matches!(field_type, Some(Type::Application(c, args))
-                      if matches!(c.as_ref(), Type::Constructor(_, c) if c.as_printed() == "Word8") &&
-                         args.is_empty()))));
+                    matches!(field_type, Some(Type::Constructor(_, c))
+                        if c.as_printed() == "Word8"))));
 
     assert!(matches!(
-        parse_st("structure Foo { bar: b c -> a, goo }"),
+        parse_st("structure Foo { bar: b -> c -> a, goo }"),
         Ok(StructureDef { name, fields, .. })
           if name.as_printed() == "Foo" &&
              matches!(fields.as_slice(),
@@ -317,13 +354,14 @@ fn structures() {
                  StructureField { name: ref name2, field_type: None, .. }]
                  if name.as_printed() == "bar" &&
                     name2.as_printed() == "goo" &&
-                    matches!(field_type, Some(Type::Function(args, ret))
-                      if matches!(&args.as_slice(), &[Type::Variable(_, b), Type::Variable(_, c)]
-                           if b.as_printed() == "b" && c.as_printed() == "c") &&
-                         matches!(ret.as_ref(), Type::Variable(_, a) if a.as_printed() == "a")))));
+                    matches!(field_type, Some(Type::Function(b, fret))
+                      if matches!(&b.as_ref(), Type::Variable(_, b) if b.as_printed() == "b") &&
+                         matches!(fret.as_ref(), Type::Function(c, ret) if
+                           matches!(c.as_ref(), Type::Variable(_, c) if c.as_printed() == "c") &&
+                           matches!(ret.as_ref(), Type::Variable(_, a) if a.as_printed() == "a"))))));
 
     assert!(matches!(
-        parse_st("structure Foo { bar: b c -> a, goo, }"),
+        parse_st("structure Foo { bar: b -> c -> a, goo, }"),
         Ok(StructureDef { name, fields, .. })
           if name.as_printed() == "Foo" &&
              matches!(fields.as_slice(),
@@ -331,10 +369,11 @@ fn structures() {
                  StructureField { name: ref name2, field_type: None, .. }]
                  if name.as_printed() == "bar" &&
                     name2.as_printed() == "goo" &&
-                    matches!(field_type, Some(Type::Function(args, ret))
-                      if matches!(&args.as_slice(), &[Type::Variable(_, b), Type::Variable(_, c)]
-                           if b.as_printed() == "b" && c.as_printed() == "c") &&
-                         matches!(ret.as_ref(), Type::Variable(_, a) if a.as_printed() == "a")))));
+                    matches!(field_type, Some(Type::Function(b, fret))
+                      if matches!(&b.as_ref(), Type::Variable(_, b) if b.as_printed() == "b") &&
+                         matches!(fret.as_ref(), Type::Function(c, ret) if
+                           matches!(c.as_ref(), Type::Variable(_, c) if c.as_printed() == "c") &&
+                           matches!(ret.as_ref(), Type::Variable(_, a) if a.as_printed() == "a"))))));
 }
 
 #[test]
@@ -385,13 +424,14 @@ fn enum_variant() {
                        if argname.as_printed() == "a"))));
 
     assert!(matches!(
-      parse_ev("Cons(a b -> c) }"),
+      parse_ev("Cons(a -> b -> c) }"),
       Ok(Some(EnumerationVariant { name, ref argument, .. }))
             if name.as_printed() == "Cons" &&
-               matches!(argument, Some(Type::Function(args, ret))
-                 if matches!(&args.as_slice(), &[Type::Variable(_, a), Type::Variable(_, b)]
-                      if a.as_printed() == "a" && b.as_printed() == "b") &&
-                    matches!(ret.as_ref(), Type::Variable(_, c) if c.as_printed() == "c"))));
+               matches!(argument, Some(Type::Function(a, bf))
+                   if matches!(a.as_ref(), Type::Variable(_, a) if a.as_printed() == "a") &&
+                      matches!(bf.as_ref(), Type::Function(b, c)
+                          if matches!(b.as_ref(), Type::Variable(_, b) if b.as_printed() == "b") &&
+                             matches!(c.as_ref(), Type::Variable(_, c) if c.as_printed() == "c")))));
 }
 
 #[test]
@@ -555,8 +595,20 @@ fn infix_and_precedence() {
     let parse_ex = |str| {
         let lexer = Lexer::from(str);
         let mut result = Parser::new("test", lexer);
-        result.add_infix_precedence("+", parse::Associativity::Left, 6);
-        result.add_infix_precedence("*", parse::Associativity::Right, 7);
+        result.precedence_table().add_operator(
+            OperatorClass::Value,
+            OperatorType::Infix,
+            Associativity::Left,
+            "+".into(),
+            6,
+        );
+        result.precedence_table().add_operator(
+            OperatorClass::Value,
+            OperatorType::Infix,
+            Associativity::Right,
+            "*".into(),
+            7,
+        );
         result.parse_expression()
     };
 
@@ -659,8 +711,20 @@ fn calls() {
     let parse_ex = |str| {
         let lexer = Lexer::from(str);
         let mut result = Parser::new("test", lexer);
-        result.add_infix_precedence("+", parse::Associativity::Left, 6);
-        result.add_infix_precedence("*", parse::Associativity::Right, 7);
+        result.precedence_table().add_operator(
+            OperatorClass::Value,
+            OperatorType::Infix,
+            Associativity::Left,
+            "+".into(),
+            6,
+        );
+        result.precedence_table().add_operator(
+            OperatorClass::Value,
+            OperatorType::Infix,
+            Associativity::Right,
+            "*".into(),
+            7,
+        );
         result.parse_expression()
     };
 
@@ -813,12 +877,48 @@ fn prefix_and_postfix() {
     let parse_ex = |str| {
         let lexer = Lexer::from(str);
         let mut result = Parser::new("test", lexer);
-        result.add_infix_precedence("+", parse::Associativity::Left, 4);
-        result.add_infix_precedence("*", parse::Associativity::Left, 8);
-        result.add_prefix_precedence("++", 6);
-        result.add_postfix_precedence("++", 6);
-        result.add_prefix_precedence("--", 7);
-        result.add_postfix_precedence("--", 7);
+        result.precedence_table().add_operator(
+            OperatorClass::Value,
+            OperatorType::Infix,
+            Associativity::Left,
+            "+".into(),
+            4,
+        );
+        result.precedence_table().add_operator(
+            OperatorClass::Value,
+            OperatorType::Infix,
+            Associativity::Left,
+            "*".into(),
+            8,
+        );
+        result.precedence_table().add_operator(
+            OperatorClass::Value,
+            OperatorType::Prefix,
+            Associativity::None,
+            "++".into(),
+            6,
+        );
+        result.precedence_table().add_operator(
+            OperatorClass::Value,
+            OperatorType::Postfix,
+            Associativity::None,
+            "++".into(),
+            6,
+        );
+        result.precedence_table().add_operator(
+            OperatorClass::Value,
+            OperatorType::Prefix,
+            Associativity::None,
+            "--".into(),
+            7,
+        );
+        result.precedence_table().add_operator(
+            OperatorClass::Value,
+            OperatorType::Postfix,
+            Associativity::None,
+            "--".into(),
+            7,
+        );
         result.parse_expression()
     };
 
@@ -1197,12 +1297,11 @@ fn functions() {
        return_type.is_none() &&
        body.len() == 1 &&
        matches!(arguments.as_slice(), [
-        FunctionArg{ name: aname, arg_type: Some(Type::Application(atype, atype_args)) },
+        FunctionArg{ name: aname, arg_type: atype },
         FunctionArg{ name: bname, arg_type: None }
        ] if
         aname.as_printed() == "a" &&
-        matches!(atype.as_ref(), Type::Constructor(_, n) if n.as_printed() == "U8") &&
-        atype_args.is_empty() &&
+        matches!(atype.as_ref(), Some(Type::Constructor(_, n)) if n.as_printed() == "U8") &&
         bname.as_printed() == "b"))));
     assert!(matches!(
      parse_def("fun(a:U8,b:U8,) { }"),
@@ -1213,15 +1312,13 @@ fn functions() {
        return_type.is_none() &&
        body.len() == 1 &&
        matches!(arguments.as_slice(), [
-        FunctionArg{ name: aname, arg_type: Some(Type::Application(atype, atype_args)) },
-        FunctionArg{ name: bname, arg_type: Some(Type::Application(btype, btype_args)) }
+        FunctionArg{ name: aname, arg_type: Some(atype) },
+        FunctionArg{ name: bname, arg_type: Some(btype) }
        ] if
         aname.as_printed() == "a" &&
-        matches!(atype.as_ref(), Type::Constructor(_, n) if n.as_printed() == "U8") &&
-        atype_args.is_empty() &&
+        matches!(atype, Type::Constructor(_, n) if n.as_printed() == "U8") &&
         bname.as_printed() == "b" &&
-        matches!(btype.as_ref(), Type::Constructor(_, n) if n.as_printed() == "U8") &&
-        btype_args.is_empty()))));
+        matches!(btype, Type::Constructor(_, n) if n.as_printed() == "U8")))));
     assert!(matches!(
      parse_def("fun(a,b:U8,) { }"),
      Ok(Definition { export: ExportClass::Private, type_restrictions, definition, .. }) if
@@ -1232,12 +1329,11 @@ fn functions() {
        body.len() == 1 &&
        matches!(arguments.as_slice(), [
         FunctionArg{ name: aname, arg_type: None },
-        FunctionArg{ name: bname, arg_type: Some(Type::Application(btype, btype_args)) }
+        FunctionArg{ name: bname, arg_type: Some(Type::Constructor(_, n)) }
        ] if
         aname.as_printed() == "a" &&
         bname.as_printed() == "b" &&
-        matches!(btype.as_ref(), Type::Constructor(_, n) if n.as_printed() == "U8") &&
-        btype_args.is_empty()))));
+        n.as_printed() == "U8"))));
     assert!(parse_def("fun(a,,b,) { }").is_err());
 }
 
@@ -1253,10 +1349,8 @@ fn definition_types() {
      parse_def("x: prim%U8 = 1;"),
      Ok(Definition { definition, .. }) if
       matches!(&definition, Def::Value(ValueDef{ mtype, .. }) if
-       matches!(mtype, Some(Type::Application(f, args)) if
-        args.is_empty() &&
-        matches!(f.as_ref(), Type::Primitive(_, name) if
-         name.as_printed() == "U8")))));
+       matches!(mtype.as_ref(), Some(Type::Primitive(_, name)) if
+        name.as_printed() == "U8"))));
     assert!(matches!(
      parse_def("x: Stupid Monad prim%U8 = 1;"),
      Ok(Definition { definition, .. }) if

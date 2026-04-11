@@ -1,8 +1,10 @@
 use crate::syntax::error::ParserError;
+use crate::syntax::precedence_table::{
+    Associativity, OperatorClass, OperatorType, PrecedenceTable,
+};
 use crate::syntax::tokens::{Lexer, LocatedToken, Token};
 use crate::syntax::*;
 use internment::ArcIntern;
-use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -18,30 +20,8 @@ use std::path::{Path, PathBuf};
 pub struct Parser<'lexer> {
     file: ArcIntern<PathBuf>,
     lexer: Lexer<'lexer>,
+    precedence_table: PrecedenceTable,
     known_tokens: Vec<LocatedToken>,
-    prefix_precedence_table: HashMap<String, u8>,
-    infix_precedence_table: HashMap<String, (u8, u8)>,
-    postfix_precedence_table: HashMap<String, u8>,
-}
-
-/// The directional associativity for an operator.
-///
-/// This directionality impacts whether (a + b + c) defaults to
-/// ((a + b) + c) or (a + (b + c)). It does not effect situations
-/// in which operator numeric precedence is different between
-/// operators.
-pub enum Associativity {
-    Left,
-    Right,
-    None,
-}
-
-/// The kind of operators we use. This is only narrowly useful inside
-/// this particular crate.
-enum OperatorType {
-    Prefix,
-    Infix,
-    Postfix,
 }
 
 impl<'lexer> Parser<'lexer> {
@@ -55,59 +35,8 @@ impl<'lexer> Parser<'lexer> {
         Parser {
             file: ArcIntern::new(file.as_ref().to_path_buf()),
             lexer,
+            precedence_table: PrecedenceTable::default(),
             known_tokens: vec![],
-            prefix_precedence_table: HashMap::new(),
-            infix_precedence_table: HashMap::new(),
-            postfix_precedence_table: HashMap::new(),
-        }
-    }
-
-    /// Add the given operator to our precedence table, at the given
-    /// precedence level and associativity.
-    ///
-    /// This is used for infix operators, only.
-    pub fn add_infix_precedence<S: ToString>(
-        &mut self,
-        operator: S,
-        associativity: Associativity,
-        level: u8,
-    ) {
-        let actual_associativity = match associativity {
-            Associativity::Left => (level * 2, (level * 2) + 1),
-            Associativity::Right => ((level * 2) + 1, level * 2),
-            Associativity::None => (level * 2, level * 2),
-        };
-
-        self.infix_precedence_table
-            .insert(operator.to_string(), actual_associativity);
-    }
-
-    /// Add the given operator to our precedence table, at the given
-    /// precedence level and associativity.
-    ///
-    /// This is used for prefix operators, only.
-    pub fn add_prefix_precedence<S: ToString>(&mut self, operator: S, level: u8) {
-        self.prefix_precedence_table
-            .insert(operator.to_string(), level * 2);
-    }
-
-    /// Add the given operator to our precedence table, at the given
-    /// precedence level and associativity.
-    ///
-    /// This is used for postfix operators, only.
-    pub fn add_postfix_precedence<S: ToString>(&mut self, operator: S, level: u8) {
-        self.postfix_precedence_table
-            .insert(operator.to_string(), level * 2);
-    }
-
-    /// Get the precedence of the given operator.
-    ///
-    /// FIXME: This currently only functions on infix operators, not
-    /// prefix and postfix. In general, this can all be cleaned up.
-    fn get_precedence(&self, name: &String) -> (u8, u8) {
-        match self.infix_precedence_table.get(name) {
-            None => (19, 20),
-            Some(x) => *x,
         }
     }
 
@@ -131,6 +60,13 @@ impl<'lexer> Parser<'lexer> {
                     error,
                 })
         }
+    }
+
+    /// Return the current precedence table.
+    ///
+    #[cfg(test)]
+    pub fn precedence_table(&mut self) -> &mut PrecedenceTable {
+        &mut self.precedence_table
     }
 
     /// Save the given token back to the top of the stream.
@@ -704,13 +640,13 @@ impl<'lexer> Parser<'lexer> {
         let function_name = self.parse_name("operator function definition")?;
         let end = self.require_token(Token::Semi, "end of operator definition")?;
 
-        match operator_type {
-            OperatorType::Infix => {
-                self.add_infix_precedence(operator_name.as_printed(), associativity, level)
-            }
-            OperatorType::Prefix => self.add_prefix_precedence(operator_name.as_printed(), level),
-            OperatorType::Postfix => self.add_postfix_precedence(operator_name.as_printed(), level),
-        }
+        self.precedence_table.add_operator(
+            OperatorClass::Value,
+            operator_type,
+            associativity,
+            operator_name.as_printed().to_string(),
+            level,
+        );
 
         Ok(OperatorDef {
             location: start.extend_to(&end),
@@ -1269,8 +1205,11 @@ impl<'lexer> Parser<'lexer> {
             .ok_or_else(|| self.bad_eof("looking for arithmetic expression"))?;
 
         let mut lhs = if let Token::OperatorName(ref n) = next.token {
-            if let Some(pre_prec) = self.prefix_precedence_table.get(n) {
-                if *pre_prec < level {
+            if let Some((pre_prec, _)) =
+                self.precedence_table
+                    .get_precedence(OperatorClass::Value, OperatorType::Prefix, n)
+            {
+                if pre_prec < level {
                     self.save(next.clone());
                     return Err(ParserError::UnexpectedToken {
                         file: self.file.clone(),
@@ -1280,7 +1219,7 @@ impl<'lexer> Parser<'lexer> {
                     });
                 }
 
-                let rhs = self.parse_arithmetic(*pre_prec)?;
+                let rhs = self.parse_arithmetic(pre_prec)?;
                 let location = self.to_location(next.span);
                 let opname = Name::new(location.clone(), n);
                 let op_expr = Expression::Reference(location, opname);
@@ -1308,8 +1247,12 @@ impl<'lexer> Parser<'lexer> {
                 }
 
                 Token::OperatorName(ref n) => {
-                    if let Some(postprec) = self.postfix_precedence_table.get(n) {
-                        if *postprec < level {
+                    if let Some((postprec, _)) = self.precedence_table.get_precedence(
+                        OperatorClass::Value,
+                        OperatorType::Postfix,
+                        n,
+                    ) {
+                        if postprec < level {
                             self.save(next);
                             break;
                         }
@@ -1322,7 +1265,10 @@ impl<'lexer> Parser<'lexer> {
                         continue;
                     }
 
-                    let (left_pr, right_pr) = self.get_precedence(n);
+                    let (left_pr, right_pr) = self
+                        .precedence_table
+                        .get_precedence(OperatorClass::Value, OperatorType::Infix, n)
+                        .unwrap_or((19, 20));
 
                     if left_pr < level {
                         self.save(next);
@@ -1540,49 +1486,18 @@ impl<'lexer> Parser<'lexer> {
     /// it's probably best to only try to call this when you're sure there
     /// should be a type sitting there.
     pub fn parse_type(&mut self) -> Result<Type, ParserError> {
-        let mut args = Vec::new();
-
-        while let Ok(t) = self.parse_type_application() {
-            args.push(t);
-        }
-
-        let Some(maybe_arrow) = self.next()? else {
-            match args.pop() {
-                None => {
-                    return Err(ParserError::UnacceptableEof {
-                        file: self.file.clone(),
-                        place: "parsing function type or type".into(),
-                    });
-                }
-
-                Some(t) if args.is_empty() => return Ok(t),
-
-                Some(_) => {
-                    return Err(ParserError::UnacceptableEof {
-                        file: self.file.clone(),
-                        place: "looking for '->' in function type".into(),
-                    });
-                }
-            }
-        };
-
-        if maybe_arrow.token == Token::Arrow {
-            let right = self.parse_type()?;
-            Ok(Type::Function(args, Box::new(right)))
-        } else if args.len() == 1 {
-            self.save(maybe_arrow);
-            Ok(args.pop().expect("length = 1 works"))
-        } else {
-            self.save(maybe_arrow.clone());
-            let LocatedToken { token, span } = maybe_arrow;
-
-            Err(ParserError::UnexpectedToken {
-                file: self.file.clone(),
-                span,
-                token,
-                expected: "'->' in function type".into(),
-            })
-        }
+        self.pratt_parser(
+            OperatorClass::Type,
+            &mut || self.parse_base_type(),
+            Token::OpenBrace,
+            Token::CloseBrace,
+            &mut |loc,name| Type::Variable(loc, name),
+            &mut |fun, arg| Type::Application(Box::new(fun), vec![arg]),
+            &mut |fun, arg| Type::Application(Box::new(fun), vec![arg]),
+            &mut |fun, arg1, arg2| Type::Application(Box::new(fun), vec![arg1,arg2]),
+            &mut |fun, args| Type::Application(Box::new(fun), args),
+            0,
+        )
     }
 
     /// Parse a type application.
@@ -1622,7 +1537,11 @@ impl<'lexer> Parser<'lexer> {
             args.push(next_arg);
         }
 
-        Ok(Type::Application(Box::new(constructor), args))
+        if args.is_empty() {
+            Ok(constructor)
+        } else {
+            Ok(Type::Application(Box::new(constructor), args))
+        }
     }
 
     /// Parse a base type from the input stream.
@@ -1781,5 +1700,202 @@ impl<'lexer> Parser<'lexer> {
                 expected: format!("looking for an operator name in {place}"),
             })
         }
+    }
+
+    /// Parse an expression, obeying the relevant laws of precedence.
+    ///
+    /// This is an implementation of Pratt Parsing, although I've probably done it in
+    /// a much more awkward way than necessary. I was heavily inspired and/or stole
+    /// code directly from [this
+    /// article](https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html),
+    /// which was instrumental in its design. All errors mine.
+    ///
+    /// Note that because arithmetic expressions can start with so many tokens, you
+    /// should only call this function if you are absolutely sure that there's an
+    /// expression waiting for you, and it would be an error if there wasn't.
+    #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
+    pub fn pratt_parser<T>(
+        &mut self,
+        operator_class: OperatorClass,
+        base_parser: &mut dyn FnMut() -> Result<T, ParserError>,
+        call_open: Token,
+        call_close: Token,
+        ref_builder: &dyn Fn(Location, Name) -> T,
+        prefix_builder: &dyn Fn(T, T) -> T,
+        postfix_builder: &dyn Fn(T, T) -> T,
+        infix_builder: &dyn Fn(T, T, T) -> T,
+        call_builder: &dyn Fn(T, Vec<T>) -> T,
+        level: u8,
+    ) -> Result<T, ParserError>
+    {
+         // first we figure out what's on the left hand side of this thing. We have
+         // to check for an operator here because we may be seeing a prefix expression.
+         let mut lhs;
+    
+         // Check if the next token is a prefix operator. We need to extract this
+         // information and then drop the borrow before calling base_parser().
+         let prefix_op_info = {
+             let next = self.next()?.ok_or_else(|| ParserError::UnacceptableEof {
+                 file: self.file.clone(),
+                 place: "parsing expression or type with operators".into(),
+             })?;
+    
+             if let Token::OperatorName(ref operator_name) = next.token {
+                 let precedence = self.precedence_table.get_precedence(
+                     operator_class,
+                     OperatorType::Prefix,
+                     operator_name,
+                 );
+                 precedence
+                     .map(|(p, _)| (p, operator_name.clone(), next.span.clone(), next.token.clone()))
+             } else {
+                 self.save(next);
+                 None
+             }
+         };
+    
+         match prefix_op_info {
+             None => {
+                 lhs = base_parser()?;
+             }
+    
+             Some((precedence_level, _, span, token)) if precedence_level < level => {
+                 return Err(ParserError::UnexpectedToken {
+                     file: self.file.clone(),
+                     span,
+                     token,
+                     expected: "a base expression or type of a tighter-binding prefix operator".into(),
+                 });
+             }
+    
+             Some((_, operator_name, span, _)) => {
+                 let subexpr = base_parser()?;
+                 let location = self.to_location(span);
+                 let opname = Name::new(location.clone(), &operator_name);
+                 let opref = ref_builder(location, opname);
+                 lhs = prefix_builder(opref, subexpr);
+             }
+         }
+    
+         loop {
+             let Some(next) = self.next()? else {
+                 return Ok(lhs);
+             };
+    
+             if next.token == call_open {
+                let mut arguments = vec![];
+                let _ = self.lexer.next();
+
+                loop {
+                    let next = self.next()?.ok_or_else(||
+                        self.bad_eof("parsing expression or type with operators"))?;
+
+                    if next.token == call_close {
+                        self.save(next);
+                        break;
+                    }
+
+                    arguments.push(base_parser()?);
+
+                    let next = self.next()?.ok_or_else(||
+                        self.bad_eof("parsing expression or type with operators"))?;
+
+                    if next.token == Token::Comma {
+                        continue;
+                    }
+
+                    if next.token == call_close {
+                        self.save(next);
+                        break;
+                    }
+
+                    return Err(ParserError::UnexpectedToken {
+                        file: self.file.clone(),
+                        span: next.span,
+                        token: next.token,
+                        expected: "comma or close".into(),
+                    });
+                }
+
+                let enforced_close = self.next()?.ok_or_else(||
+                    self.bad_eof("looking for close paren for call (expression or type)"))?;
+                if enforced_close.token != call_close {
+                    return Err(ParserError::UnexpectedToken {
+                        file: self.file.clone(),
+                        span: enforced_close.span,
+                        token: enforced_close.token,
+                        expected: "expected close".into(),
+                    });
+                }
+
+                return Ok(call_builder(arguments));
+             }
+    
+             let start_expr = if let Token::OperatorName(ref operator_name) = next.token {
+                 // Clone immediately to release the borrow on `next` (the peeked reference),
+                 // so we can call token_stream.next() after the precedence checks.
+                 let operator_name = operator_name.clone();
+
+                 // Check for postfix first. If '++' is both postfix and infix it will
+                 // always be treated as postfix — an inherently ambiguous situation.
+                 let postfix_precedence = self.precedence_table.get_precedence(
+                     operator_class,
+                     OperatorType::Postfix,
+                     &operator_name,
+                 );
+
+                 if let Some((postfix_precedence, _)) = postfix_precedence {
+                     if postfix_precedence < level {
+                         self.save(next);
+                         break;
+                     }
+                     let location = self.to_location(next.span);
+                     let opname = Name::new(location.clone(), &operator_name);
+                     let op_expr = ref_builder(location, opname);
+                     lhs = postfix_builder(op_expr, lhs);
+                     continue;
+                 }
+
+                 let (left_infix, right_infix) = self.precedence_table.get_precedence(
+                     operator_class,
+                     OperatorType::Infix,
+                     &operator_name,
+                 ).unwrap_or((19, 20));
+
+                 if left_infix < level {
+                     break;
+                 }
+                 // Consume only after deciding to use this operator as infix.
+                 Some((right_infix, next.span.clone(), operator_name))
+             } else {
+                 None
+             };
+    
+             if let Some((right_infix, span, operator_name)) = start_expr {
+                 let rhs = self.pratt_parser(
+                    operator_class,
+                    base_parser,
+                    call_open,
+                    call_close,
+                    ref_builder,
+                    prefix_builder,
+                    postfix_builder,
+                    infix_builder,
+                    call_builder,
+                    right_infix,
+                 )?;
+    
+                 let location = self.to_location(span);
+                 let name = Name::new(location.clone(), operator_name);
+                 let opref = ref_builder(location, name);
+                 
+                 lhs = infix_builder(opref, lhs, rhs);
+            }
+    
+            break;
+         }
+    
+         Ok(lhs)
     }
 }
